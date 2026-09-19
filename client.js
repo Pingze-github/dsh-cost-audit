@@ -414,27 +414,20 @@ window.__ModuleLoader__.load({
 			return `99.${"9".repeat(distinguishingPlaces - 1)}${10 - roundedLoss}`;
 		}
 
-		/** Drop the trailing zeros a fixed-point rendering leaves behind. */
-		function trimZeros(text) {
-			return text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
-		}
-
 		/**
-		 * CNY text for a nano-CNY cost. The pill stays short; the panel keeps
-		 * enough precision that a sub-cent turn is still legible (and never
-		 * rounds one away to a bare ¥0).
+		 * CNY text for a nano-CNY cost: always two decimals, everywhere. A
+		 * ten-thousandth of a yuan is not a figure anyone acts on; the only
+		 * exception is a real cost too small to survive the rounding, which says
+		 * so rather than pretending to be free.
 		 * @param costNano - cost in CNY × 1e9.
-		 * @param exact - true for the panel's fuller precision.
 		 * @returns display string.
 		 */
-		function formatCny(costNano, exact = false) {
+		function formatCny(costNano) {
 			const yuan = costNano / NANO;
 			if (!Number.isFinite(yuan)) return "—";
 			if (yuan === 0) return "¥0";
-			if (yuan >= 1) return `¥${yuan.toFixed(exact ? 4 : 2)}`;
-			if (yuan >= 0.01) return `¥${trimZeros(yuan.toFixed(4))}`;
-			const fixed = trimZeros(yuan.toFixed(6));
-			return fixed === "0" ? `¥${yuan.toPrecision(2)}` : `¥${fixed}`;
+			const rounded = Math.round(yuan * 100) / 100;
+			return rounded === 0 ? "<¥0.01" : `¥${rounded.toFixed(2)}`;
 		}
 
 		/** Input-side total: the three disjoint prompt buckets. */
@@ -597,7 +590,7 @@ window.__ModuleLoader__.load({
 			}
 			rows.push(h(Detail, { key: "input", label: t(`${prefix}.input`), children: countText(inputTokensOf(bucket), t) }));
 			rows.push(h(Detail, { key: "output", label: t(`${prefix}.output`), children: countText(bucket.outputTokens, t) }));
-			rows.push(h(Detail, { key: "cost", label: costLabel, children: bucket.pricedTokens > 0 ? formatCny(bucket.costNano, true) : "—" }));
+			rows.push(h(Detail, { key: "cost", label: costLabel, children: bucket.pricedTokens > 0 ? formatCny(bucket.costNano) : "—" }));
 			if (bucket.unpricedTokens > 0) {
 				rows.push(
 					h("dd", { key: "unpriced", className: "dshstats-note" }, t("cost.unpriced", { count: countText(bucket.unpricedTokens, t) }))
@@ -1285,13 +1278,13 @@ window.__ModuleLoader__.load({
 			// `bucketDetails` ends with the session total; the daily figure breaks
 			// that total down, so it sits immediately after it and before the
 			// shares of it that this block appends next.
-			sections[0].rows.push(h(Detail, { key: "today", label: t("session.today"), children: formatCny(todayCostNano(stats), true) }));
+			sections[0].rows.push(h(Detail, { key: "today", label: t("session.today"), children: formatCny(todayCostNano(stats)) }));
 			if (bucket.cacheReadCostNano !== undefined) {
 				sections[0].rows = sections[0].rows.concat([
 					h(Detail, {
 						key: "cacheReadCost",
 						label: t("session.cacheReadCost"),
-						children: formatCny(bucket.cacheReadCostNano, true)
+						children: formatCny(bucket.cacheReadCostNano)
 					})
 				]);
 			}
@@ -1300,7 +1293,7 @@ window.__ModuleLoader__.load({
 					h(Detail, {
 						key: "compactionCost",
 						label: t("session.compaction"),
-						children: t("session.compactionValue", { cost: formatCny(stats.compaction.summaryCostNano, true), count: stats.compaction.count })
+						children: t("session.compactionValue", { cost: formatCny(stats.compaction.summaryCostNano), count: stats.compaction.count })
 					})
 				]);
 			}

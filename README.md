@@ -12,7 +12,7 @@ geometry. The official pills are untouched; this plugin adds its own beside them
 
 **Per turn** — a pill in the assistant actions row, between the copy button and
 the branch button, next to the official "consumed" and "ran for" pills. It shows
-`¥0.00621` and opens:
+`¥0.01` and opens:
 
 | Row | Meaning |
 | --- | --- |
@@ -77,6 +77,10 @@ with a severity, a one-line fix, and a per-session Dismiss:
 | `compaction-churn` | 2+ compactions, or the summaries cost ≥ 10% of the session | — (a config value, next session) |
 | `model-retries` | 5+ model retries | — |
 | `balance-low` | the balance covers fewer than five sessions at this burn rate | — (top up) |
+
+Money is always rendered to **two decimals** — a ten-thousandth of a yuan is
+not a figure anyone acts on. The one exception is a real cost too small to
+survive that rounding, which reads `<¥0.01` rather than pretending to be free.
 
 ### Applying a tip
 
