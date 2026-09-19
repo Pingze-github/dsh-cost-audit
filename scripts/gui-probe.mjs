@@ -11,6 +11,7 @@
  *   node scripts/gui-probe.mjs --url <authenticated-url> --out <shot.png>
  *                              [--wait <selector>] [--click <selector>]
  *                              [--session <id>] [--timeout <ms>]
+ *                              [--seed '<key>=<json>'] [--profile <dir>]
  *                              [--report '<js expression>']
  *
  * @module dsh-stats/scripts/gui-probe
@@ -34,6 +35,7 @@ const click = arg("--click");
 const timeoutMs = Number(arg("--timeout", "45000"));
 const port = Number(arg("--port", "9333"));
 const profileDir = arg("--profile", `/tmp/dsh-stats-probe-${process.pid}`);
+const seedPair = arg("--seed");
 const reportExpr = arg(	"--report",
 	`JSON.stringify({
 		bootFailure: document.body.innerText.includes("Failed to load plugins"),
@@ -132,6 +134,16 @@ async function main() {
 	if (sessionId !== undefined) {
 		const seed = `try { localStorage.setItem("dsh.sessions.current", JSON.stringify({ sessionId: ${JSON.stringify(sessionId)} })); } catch {}`;
 		await send("Page.addScriptToEvaluateOnNewDocument", { source: seed });
+	}
+	if (seedPair !== undefined) {
+		// A storage seed installed before any page script runs. This is the only
+		// reliable way to test mount-time reads: writing storage from a report
+		// races the component that already read it.
+		const split = seedPair.indexOf("=");
+		const key = seedPair.slice(0, split);
+		const value = seedPair.slice(split + 1);
+		const source = `try { localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)}); } catch {}`;
+		await send("Page.addScriptToEvaluateOnNewDocument", { source });
 	}
 	await send("Page.navigate", { url });
 

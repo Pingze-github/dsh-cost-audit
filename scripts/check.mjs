@@ -551,6 +551,41 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 
 //#endregion
 
+//#region metrics
+
+{
+	// The counters an adopted tip is judged against.
+	const { view } = fold([
+		route("deepseek-flash"),
+		{ type: "step/start", seq: 1, time: PEAK, data: { turn: 1, step: 1 } },
+		settle(1, 1, { inputTokens: 1000, cacheReadTokens: 1000, cacheWriteTokens: 0, outputTokens: 10 }, PEAK + 500),
+		{ type: "step/end", seq: 2, time: PEAK + 600, data: { turn: 1, step: 1 } },
+		...toolCalls(3, "read", JSON.stringify({ file_path: "/tmp/a.js" }), 50, PEAK + 700)
+	]);
+	assert.equal(view.metrics.steps, 1, "steps counted");
+	assert.equal(view.metrics.requests, 1, "settlements counted");
+	assert.equal(view.metrics.promptTokens, 2000, "prompt tokens summed");
+	assert.equal(view.metrics.toolCalls, 3, "tool calls counted");
+	assert.equal(view.metrics.fastCalls, 3, "short calls counted");
+	assert.equal(view.metrics.repeatCalls, 2, "the second and third dispatch repeat one target");
+	assert.equal(view.metrics.retries, 0, "retries counted");
+	assert.equal(view.metrics.productiveCalls, 0, "reads are not productive");
+}
+
+{
+	// Failures total independently of the bounded per-tool table.
+	const events = [route("deepseek-flash")];
+	for (let index = 0; index < 4; index += 1) {
+		events.push({ type: "tool/call", seq: index * 2, time: PEAK, data: { turn: 1, step: 1, callId: `f${String(index)}`, name: "bash", arguments: JSON.stringify({ command: `false ${String(index)}` }) } });
+		events.push({ type: "tool/result", seq: index * 2 + 1, time: PEAK + 5, data: { turn: 1, step: 1, message: { source: { callId: `f${String(index)}` } }, error: { name: "ToolError", code: "exit-1" } } });
+	}
+	const { view } = fold(events);
+	assert.equal(view.metrics.toolErrors, 4, "every failure is totalled");
+	assert.equal(view.metrics.toolCalls, 4, "every dispatch is counted");
+}
+
+//#endregion
+
 //#region advisor
 
 /** The advice codes one event list produces. */

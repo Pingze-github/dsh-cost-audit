@@ -89,6 +89,30 @@ draft**, because acting means writing the composer and a click must never throw
 away what a human typed; and each tip disables itself once sent. Dismissing a tip
 is remembered per session in this browser.
 
+### After you apply one
+
+An applied tip **leaves the pill's count and stays in the list**, marked with a
+verdict that keeps updating as the session runs:
+
+| Verdict | Meaning |
+| --- | --- |
+| Adopted · improved | the metric moved the good way by more than its floor |
+| Adopted · about the same | it moved less than the floor — the change did not register |
+| Adopted · got worse | it moved the wrong way by more than the floor |
+| Adopted · too early to tell | not enough calls since adoption to judge; the panel says how many |
+
+The reading is **since adoption**, not a lifetime average that history would
+drown out: the browser snapshots the cumulative counters the moment you click and
+subtracts them from a later reading. The metric per tip is the one that tip is
+about — context tokens per request, short-call share, repeat-call share, tool
+failure share, cache hit rate — and every floor is a share of the baseline, so a
+token count and a ratio are judged on the same scale. Nothing here calls a model;
+it is arithmetic on the same fold the pills already read.
+
+A verdict is a *measurement*, not a promise: a metric can improve for reasons the
+tip had nothing to do with. Treat "about the same" as the honest default and the
+numbers as the evidence.
+
 Every one is folded from the durable log — **the advisor never calls a model**,
 because a token-saving feature that spends tokens is self-defeating. The
 thresholds are deliberately conservative and every rule needs a sustained

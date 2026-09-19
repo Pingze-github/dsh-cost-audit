@@ -133,6 +133,18 @@ window.__ModuleLoader__.load({
 			"advice.toolFailures.instruction": "{tool} 已经连续失败多次。停下来把完整错误读一遍，说明根因和下一步方案，不要重复同样的调用。",
 			"advice.cacheHitDrop.action": "让它排查缓存",
 			"advice.cacheHitDrop.instruction": "本会话的缓存命中率偏低。查清楚是什么在每一轮改变请求头或前缀（AGENTS.md、技能注入、系统提示），找出并说明。",
+			"verdict.improved": "已采纳 · 有改善",
+			"verdict.steady": "已采纳 · 基本持平",
+			"verdict.worse": "已采纳 · 反而变差",
+			"verdict.waiting": "已采纳 · 还在观察",
+			"verdict.metric": "{label}：{before} → {after}",
+			"verdict.sample": "采纳后已有 {calls} 次调用 / {requests} 次模型调用",
+			"verdict.done": "采纳后完成 {edits} 次改动，当前连续 {steps} 步无产出",
+			"verdict.metric.prompt": "每请求上下文 token",
+			"verdict.metric.fast": "短调用占比",
+			"verdict.metric.repeat": "重复调用占比",
+			"verdict.metric.hit": "缓存命中率",
+			"verdict.metric.error": "工具失败占比",
 		};
 
 		const DICT_EN = {
@@ -222,7 +234,19 @@ window.__ModuleLoader__.load({
 			"advice.toolFailures.action": "Ask it to read the error",
 			"advice.toolFailures.instruction": "{tool} has failed repeatedly. Stop, read the full error, and state the root cause and your next plan; do not repeat the same call.",
 			"advice.cacheHitDrop.action": "Ask it to investigate",
-			"advice.cacheHitDrop.instruction": "This session's cache hit rate is low. Find out what changes the request head or prefix every turn (AGENTS.md, skill injection, system prompt) and report it."
+			"advice.cacheHitDrop.instruction": "This session's cache hit rate is low. Find out what changes the request head or prefix every turn (AGENTS.md, skill injection, system prompt) and report it.",
+			"verdict.improved": "Adopted · improved",
+			"verdict.steady": "Adopted · about the same",
+			"verdict.worse": "Adopted · got worse",
+			"verdict.waiting": "Adopted · too early to tell",
+			"verdict.metric": "{label}: {before} → {after}",
+			"verdict.sample": "{calls} tool calls / {requests} model calls since adoption",
+			"verdict.done": "{edits} edits since adoption; {steps} steps without output right now",
+			"verdict.metric.prompt": "Context tokens per request",
+			"verdict.metric.fast": "Short-call share",
+			"verdict.metric.repeat": "Repeat-call share",
+			"verdict.metric.hit": "Cache hit rate",
+			"verdict.metric.error": "Tool failure share",
 		};
 
 		//#endregion
@@ -290,7 +314,15 @@ window.__ModuleLoader__.load({
 			".dshstats-act{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover);border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;padding:3px 10px;font:inherit;cursor:pointer}",
 			".dshstats-act:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-pressed)}",
 			".dshstats-act:disabled{color:var(--dsw-alias-label-caption);cursor:default;opacity:.6}",
-			".dshstats-manual{color:var(--dsw-alias-label-caption)}"
+			".dshstats-manual{color:var(--dsw-alias-label-caption)}",
+			".dshstats-verdict{border-left:2px solid var(--dsw-alias-border-l2);padding-left:8px;display:grid;gap:2px}",
+			".dshstats-verdict-improved{border-left-color:var(--dsw-alias-state-success-primary)}",
+			".dshstats-verdict-worse{border-left-color:var(--dsw-alias-state-error-primary)}",
+			".dshstats-verdict-waiting{border-left-color:var(--dsw-alias-state-warn-primary)}",
+			".dshstats-verdictState{color:var(--dsw-alias-label-secondary);font-weight:500}",
+			".dshstats-verdict-improved .dshstats-verdictState{color:var(--dsw-alias-state-success-primary)}",
+			".dshstats-verdict-worse .dshstats-verdictState{color:var(--dsw-alias-state-error-primary)}",
+			".dshstats-verdictDetail,.dshstats-verdictSample{color:var(--dsw-alias-label-tertiary)}"
 		].join("");
 
 		const STYLE_TAG = "dsh-stats/pills.css";
@@ -902,6 +934,95 @@ window.__ModuleLoader__.load({
 			return { code: "balance-low", severity: "warn", values: { balance: balance.balance.total, costNano } };
 		}
 
+		/**
+		 * What one adopted tip is judged on. `metric` names a derived figure,
+		 * `better` its good direction, `floor` the move that counts as a real
+		 * change rather than noise, and `sample` the least evidence worth
+		 * judging on.
+		 */
+		const VERDICTS = {
+			"context-reread": { metric: "prompt", better: "lower", floor: 0.1, sample: 3, unit: "requests" },
+			"fragmented-tools": { metric: "fast", better: "lower", floor: 0.15, sample: 10, unit: "toolCalls" },
+			"repeated-target": { metric: "repeat", better: "lower", floor: 0.1, sample: 10, unit: "toolCalls" },
+			"tool-failures": { metric: "error", better: "lower", floor: 0.05, sample: 10, unit: "toolCalls" },
+			"cache-hit-drop": { metric: "hit", better: "higher", floor: 0.05, sample: 10, unit: "toolCalls" }
+		};
+
+		/** One figure from a metrics reading: the label, and the number to compare. */
+		function metricValue(metric, reading) {
+			const requests = Math.max(1, reading.requests);
+			const calls = Math.max(1, reading.toolCalls);
+			switch (metric) {
+				case "prompt":
+					return reading.promptTokens / requests;
+				case "fast":
+					return reading.fastCalls / calls;
+				case "repeat":
+					return reading.repeatCalls / calls;
+				case "error":
+					return reading.toolErrors / calls;
+				case "hit":
+					return reading.cacheReadTokens / Math.max(1, reading.promptTokens);
+				default:
+					return 0;
+			}
+		}
+
+		/** Render one figure for its metric's unit. */
+		function metricText(metric, value, t) {
+			if (metric === "prompt") return formatCompact(value, t);
+			return `${Math.round(value * 1000) / 10}%`;
+		}
+
+		/**
+		 * Judge one adopted tip against the reading taken when it was applied.
+		 *
+		 * Everything is measured "since adoption" — the difference of two
+		 * cumulative readings — rather than against a lifetime average that
+		 * history would drown out. Until the sample is large enough the verdict
+		 * stays explicitly undecided instead of guessing.
+		 *
+		 * @param code - the advice code.
+		 * @param baseline - the metrics object captured at adoption.
+		 * @param current - the metrics object now.
+		 * @param t - locale seat.
+		 * @returns the verdict state and its one-line evidence.
+		 */
+		function assessAdoption(code, baseline, current, t) {
+			if (baseline === undefined || current === undefined) return { state: "waiting", detail: null };
+			const since = {
+				requests: current.requests - baseline.requests,
+				toolCalls: current.toolCalls - baseline.toolCalls,
+				steps: current.steps - baseline.steps
+			};
+			if (code === "idle-grinding") {
+				const edits = current.productiveCalls - baseline.productiveCalls;
+				const detail = t("verdict.done", { edits, steps: current.stepsSinceProductive });
+				if (since.steps < 3) return { state: "waiting", detail };
+				if (current.stepsSinceProductive < current.steps && edits > 0) return { state: "improved", detail };
+				if (edits === 0 && current.stepsSinceProductive >= baseline.stepsSinceProductive) return { state: "worse", detail };
+				return { state: "steady", detail };
+			}
+			const plan = VERDICTS[code];
+			if (plan === undefined) return { state: "waiting", detail: null };
+			const sample = since[plan.unit];
+			// With nothing measured yet there is no "after" to show — a 0/1
+			// division would print a meaningless 0% or 100%.
+			if (sample === 0) return { state: "waiting", detail: null };
+			const before = metricValue(plan.metric, baseline);
+			const after = metricValue(plan.metric, { ...current, requests: since.requests, toolCalls: since.toolCalls, promptTokens: current.promptTokens - baseline.promptTokens, cacheReadTokens: current.cacheReadTokens - baseline.cacheReadTokens, fastCalls: current.fastCalls - baseline.fastCalls, repeatCalls: current.repeatCalls - baseline.repeatCalls, toolErrors: current.toolErrors - baseline.toolErrors });
+			const detail = t("verdict.metric", { label: t(`verdict.metric.${plan.metric}`), before: metricText(plan.metric, before, t), after: metricText(plan.metric, after, t) });
+			if (sample < plan.sample) return { state: "waiting", detail };
+			// `floor` is a share of the baseline, not an absolute move: one
+			// metric is a ratio (short-call share) and another is a token count
+			// (context per request), and both must be judged on the same scale.
+			if (before === 0) return { state: "steady", detail };
+			const move = (plan.better === "lower" ? before - after : after - before) / before;
+			if (move >= plan.floor) return { state: "improved", detail };
+			if (move <= -plan.floor) return { state: "worse", detail };
+			return { state: "steady", detail };
+		}
+
 		/** Sessions whose dismissed advice codes are remembered in this browser. */
 		const DISMISS_PREFIX = "dsh-stats.dismissed";
 
@@ -920,6 +1041,29 @@ window.__ModuleLoader__.load({
 		function writeDismissed(sessionId, codes) {
 			try {
 				localStorage.setItem(`${DISMISS_PREFIX}.${String(sessionId)}`, JSON.stringify(codes));
+			} catch {
+				// A browser refusing storage is not a reason to break the view.
+			}
+		}
+
+		/** Adopted tips, with the metrics reading taken when each was applied. */
+		const ADOPTED_PREFIX = "dsh-stats.adopted";
+
+		/** Read the tips adopted for one session, in adoption order. */
+		function readAdopted(sessionId) {
+			try {
+				const raw = localStorage.getItem(`${ADOPTED_PREFIX}.${String(sessionId)}`);
+				const parsed = raw === null ? null : JSON.parse(raw);
+				return Array.isArray(parsed) ? parsed.filter((item) => item !== null && typeof item === "object" && typeof item.code === "string") : [];
+			} catch {
+				return [];
+			}
+		}
+
+		/** Persist the adopted tips for one session. */
+		function writeAdopted(sessionId, records) {
+			try {
+				localStorage.setItem(`${ADOPTED_PREFIX}.${String(sessionId)}`, JSON.stringify(records));
 			} catch {
 				// A browser refusing storage is not a reason to break the view.
 			}
@@ -1196,7 +1340,7 @@ window.__ModuleLoader__.load({
 			const { t, stats, sessionId, balance, inputActions, useInput } = props;
 			const seat = useStatDialog();
 			const [dismissed, setDismissed] = react.useState(() => readDismissed(sessionId));
-			const [sent, setSent] = react.useState([]);
+			const [adopted, setAdopted] = react.useState(() => readAdopted(sessionId));
 			// `useInput` is a selector hook, exactly like `useChat` and
 			// `useProjection`; two primitive reads keep it reference-stable.
 			const draft = useInput((state) => state.draft);
@@ -1208,13 +1352,23 @@ window.__ModuleLoader__.load({
 				if (busy || inputActions === undefined) return;
 				inputActions.setDraft(t(`advice.${ADVICE_KEYS[item.code]}.instruction`, adviceParams(item.code, item.values, t)));
 				inputActions.submit();
-				setSent(sent.concat([item.code]));
+				// Keep the reading taken at this moment: every later verdict is
+				// the difference between it and a later one.
+				const record = { code: item.code, at: Date.now(), baseline: stats.metrics };
+				const next = adopted.some((entry) => entry.code === item.code)
+					? adopted.map((entry) => (entry.code === item.code ? record : entry))
+					: adopted.concat([record]);
+				setAdopted(next);
+				writeAdopted(sessionId, next);
 			};
 			const fromLog = Array.isArray(stats.advice) ? stats.advice : [];
 			const low = balanceAdvice(stats, balance.value);
 			const all = low === null ? fromLog : fromLog.concat([low]);
-			const live = all.filter((item) => !dismissed.includes(item.code));
-			if (live.length === 0) return null;
+			const shown = all.filter((item) => !dismissed.includes(item.code));
+			// An adopted tip leaves the count — it is no longer an open question,
+			// it is being measured — but it stays in the list to be read.
+			const open = shown.filter((item) => !adopted.some((entry) => entry.code === item.code));
+			if (shown.length === 0) return null;
 			const dismiss = (code) => {
 				const next = dismissed.includes(code) ? dismissed : dismissed.concat([code]);
 				setDismissed(next);
@@ -1224,11 +1378,12 @@ window.__ModuleLoader__.load({
 				setDismissed([]);
 				writeDismissed(sessionId, []);
 			};
-			const worst = live.some((item) => item.severity === "high") ? "high" : live.some((item) => item.severity === "warn") ? "warn" : "info";
-			const items = live.map((item) => {
+			const worst = open.some((item) => item.severity === "high") ? "high" : open.some((item) => item.severity === "warn") ? "warn" : "info";
+			const items = shown.map((item) => {
 				const segment = ADVICE_KEYS[item.code] ?? "info";
 				const action = ADVICE_ACTIONS.has(item.code);
-				const done = sent.includes(item.code);
+				const record = adopted.find((entry) => entry.code === item.code);
+				const verdict = record === undefined ? null : assessAdoption(item.code, record.baseline, stats.metrics, t);
 				return h(
 					"div",
 					{ key: item.code, className: "dshstats-advice" },
@@ -1247,19 +1402,34 @@ window.__ModuleLoader__.load({
 					h(
 						"div",
 						{ className: "dshstats-adviceFoot" },
-						action
+						verdict !== null
 							? h(
-									"button",
-									{
-										type: "button",
-										className: "dshstats-act",
-										disabled: busy || done,
-										title: busy ? t("advice.blocked") : undefined,
-										onClick: () => run(item)
-									},
-									done ? t("advice.sent") : t(`advice.${segment}.action`)
+									"div",
+									{ className: `dshstats-verdict dshstats-verdict-${verdict.state}` },
+									h("span", { className: "dshstats-verdictState" }, t(`verdict.${verdict.state}`)),
+									verdict.detail === null ? null : h("span", { className: "dshstats-verdictDetail" }, verdict.detail),
+									h(
+										"span",
+										{ className: "dshstats-verdictSample" },
+										t("verdict.sample", {
+											calls: Math.max(0, stats.metrics.toolCalls - (record.baseline?.toolCalls ?? 0)),
+											requests: Math.max(0, stats.metrics.requests - (record.baseline?.requests ?? 0))
+										})
+									)
 								)
-							: h("span", { className: "dshstats-manual" }, t("advice.manual"))
+							: action
+								? h(
+										"button",
+										{
+											type: "button",
+											className: "dshstats-act",
+											disabled: busy,
+											title: busy ? t("advice.blocked") : undefined,
+											onClick: () => run(item)
+										},
+										t(`advice.${segment}.action`)
+									)
+								: h("span", { className: "dshstats-manual" }, t("advice.manual"))
 					)
 				);
 			});
@@ -1289,7 +1459,7 @@ window.__ModuleLoader__.load({
 						}
 					},
 					h(ADVICE_ICON, null),
-					h("span", { className: "dshstats-label" }, t("advice.pill", { count: live.length }))
+					h("span", { className: "dshstats-label" }, t("advice.pill", { count: open.length }))
 				),
 				panelOf({
 					open: seat.open,
@@ -1297,7 +1467,7 @@ window.__ModuleLoader__.load({
 					pos: seat.pos,
 					icon: h(ADVICE_ICON, null),
 					title: t("advice.title"),
-					value: t("advice.pill", { count: live.length }),
+					value: t("advice.pill", { count: open.length }),
 					ariaLabel: t("advice.title"),
 					children: items
 				})

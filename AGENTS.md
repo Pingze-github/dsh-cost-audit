@@ -114,6 +114,19 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
 - **A new session renders the hero, not the conversation.** Slots under
   `conversation.composer.dock` do not mount until the session has a transcript,
   so anything reached through those props is unreachable in a fresh session.
+- **Submitting into a session RESUMES it and runs a turn.** `setDraft` +
+  `submit` on a session that looks finished starts a new turn there, against
+  that session's own working directory. During this plugin's verification that
+  resurrection ran `deploy.sh` in the user's linfev repo before it could be
+  interrupted. **Never click an untested action button on a session you did not
+  create** — build a throwaway session, or test the record path with a pre-mount
+  storage seed instead (`gui-probe.mjs --seed '<key>=<json>'`, which installs
+  storage before any page script so mount-time reads see it; writing storage from
+  a report races the component that already read it).
+- **An action's floor must be relative.** The advisory floors are shares, but one
+  metric is a ratio and another is a token count; comparing an absolute move
+  against a share reported "got worse" for a 0.1% drift. Compare
+  `(before - after) / before` and guard `before === 0`.
 - `dsh plugin add` only writes the profile manifest; a bundle becomes a profile
   layer at boot **unless** `dsh-hotswap` is mounted, which watches
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or

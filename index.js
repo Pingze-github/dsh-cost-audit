@@ -322,6 +322,12 @@ const signalShape = {
   productiveCalls: z.number().int().nonnegative(),
   stepsSinceProductive: z.number().int().nonnegative(),
   productiveThisStep: z.boolean(),
+  /** Completed steps, the denominator for "cost per step". */
+  steps: z.number().int().nonnegative(),
+  /** Dispatches whose target had already been dispatched — the repeat rate. */
+  repeatCalls: z.number().int().nonnegative(),
+  /** Every tool failure, including names the bounded per-tool table evicted. */
+  toolErrorTotal: z.number().int().nonnegative(),
 };
 
 const signalsSchema = z.object(signalShape).strict();
@@ -335,6 +341,9 @@ const ZERO_SIGNALS = Object.freeze({
   productiveCalls: 0,
   stepsSinceProductive: 0,
   productiveThisStep: false,
+  steps: 0,
+  repeatCalls: 0,
+  toolErrorTotal: 0,
 });
 
 /** Tools whose call means the session actually produced or shipped something. */
@@ -433,6 +442,7 @@ function statsView(state) {
     turns,
     timing: state.timing,
     compaction: state.compaction,
+    metrics: statsMetrics(state),
     advice: buildAdvice(state),
   };
 }
@@ -699,6 +709,7 @@ function closeToolCall(state, event) {
     toolErrors: failed
       ? bumpTally(state.signals.toolErrors, pending.name, (state.signals.toolErrors[pending.name] ?? 0) + 1, TOOL_MEMORY)
       : state.signals.toolErrors,
+    toolErrorTotal: state.signals.toolErrorTotal + (failed ? 1 : 0),
   };
   return withTiming({ ...state, pendingCalls: rest, signals }, pending.turn, {
     toolMs: ms,
@@ -755,6 +766,55 @@ function foldCompactionSummary(state, event, pricing) {
 //#endregion
 
 //#region advisor
+
+/**
+ * The cumulative counters an adopted tip is judged against. The browser
+ * snapshots this object when a tip is applied and compares it with a later
+ * reading, so every assessment is "since adoption" rather than a lifetime
+ * average that history would drown out.
+ *
+ * @param state - the fold state.
+ * @returns a flat object of numbers.
+ */
+function statsMetrics(state) {
+  let fastCalls = 0;
+  for (const tool of Object.values(state.timing.total.tools)) fastCalls += tool.fast;
+  return {
+    costNano: state.total.costNano,
+    cacheReadCostNano: state.total.cacheReadCostNano,
+    promptTokens: inputTokensOf(state.total),
+    cacheReadTokens: state.total.cacheReadTokens,
+    requests: state.timing.total.modelCalls,
+    steps: state.signals.steps,
+    toolCalls: state.timing.total.toolCalls,
+    fastCalls,
+    repeatCalls: state.signals.repeatCalls,
+    toolErrors: state.signals.toolErrorTotal,
+    retries: state.signals.retries,
+    compactions: state.compaction.count,
+    stepsSinceProductive: state.signals.stepsSinceProductive,
+    productiveCalls: state.signals.productiveCalls,
+  };
+}
+
+const metricsSchema = z
+  .object({
+    costNano: z.number().nonnegative(),
+    cacheReadCostNano: z.number().nonnegative(),
+    promptTokens: z.number().nonnegative(),
+    cacheReadTokens: z.number().nonnegative(),
+    requests: z.number().int().nonnegative(),
+    steps: z.number().int().nonnegative(),
+    toolCalls: z.number().int().nonnegative(),
+    fastCalls: z.number().int().nonnegative(),
+    repeatCalls: z.number().int().nonnegative(),
+    toolErrors: z.number().int().nonnegative(),
+    retries: z.number().int().nonnegative(),
+    compactions: z.number().int().nonnegative(),
+    stepsSinceProductive: z.number().int().nonnegative(),
+    productiveCalls: z.number().int().nonnegative(),
+  })
+  .strict();
 
 /**
  * The token-saving advice this fold can justify right now, most urgent first.
@@ -866,7 +926,7 @@ function createStatsProjection(pricing) {
   let viewValue;
   return {
     key: PROJECTION_KEY,
-    stateVersion: 3,
+    stateVersion: 4,
     stateSchema,
     init: () => ({
       provider: "",
@@ -927,7 +987,8 @@ function createStatsProjection(pricing) {
         if (typeof data?.callId === "string" && typeof data?.name === "string" && Number.isInteger(turn)) {
           const target = targetOf(data.name, data.arguments);
           const key = `${data.name}\u0000${target}`;
-          const targets = target === "" ? state.signals.targets : bumpTally(state.signals.targets, key, { name: data.name, target, count: (state.signals.targets[key]?.count ?? 0) + 1 }, TARGET_MEMORY);
+          const seen = state.signals.targets[key]?.count ?? 0;
+          const targets = target === "" ? state.signals.targets : bumpTally(state.signals.targets, key, { name: data.name, target, count: seen + 1 }, TARGET_MEMORY);
           const productive = PRODUCTIVE_TOOLS.has(data.name);
           next = {
             ...next,
@@ -935,6 +996,7 @@ function createStatsProjection(pricing) {
             signals: {
               ...state.signals,
               targets,
+              repeatCalls: state.signals.repeatCalls + (seen > 0 ? 1 : 0),
               productiveCalls: state.signals.productiveCalls + (productive ? 1 : 0),
               productiveThisStep: state.signals.productiveThisStep || productive,
             },
@@ -944,8 +1006,8 @@ function createStatsProjection(pricing) {
         next = closeToolCall(next, event);
       } else if (type === "step/end") {
         const signals = state.signals.productiveThisStep
-          ? { ...state.signals, productiveThisStep: false, stepsSinceProductive: 0 }
-          : { ...state.signals, stepsSinceProductive: state.signals.stepsSinceProductive + 1 };
+          ? { ...state.signals, productiveThisStep: false, stepsSinceProductive: 0, steps: state.signals.steps + 1 }
+          : { ...state.signals, stepsSinceProductive: state.signals.stepsSinceProductive + 1, steps: state.signals.steps + 1 };
         next = { ...next, openStep: null, signals };
       } else if (type === "compaction/summary") {
         next = foldCompactionSummary(next, event, pricing);
@@ -979,6 +1041,7 @@ function createStatsProjection(pricing) {
           turns: z.record(z.string(), z.object({ ...bucketShape, model: z.string() }).strict()),
           timing: timingViewSchema,
           compaction: compactionSchema,
+          metrics: metricsSchema,
           advice: z.array(
             z
               .object({
