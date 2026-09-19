@@ -98,6 +98,25 @@ for (const [code, segment] of adviceCodes) {
   }
 }
 
+// An actionable code also needs a past-tense line: adopting replaces the button
+// with the verdict block, and a bare "Adopted · too early to tell" is
+// indistinguishable from "the click did nothing". Every code with a button must
+// therefore be able to say what actually ran.
+const actionsStart = client.indexOf("const ADVICE_ACTIONS = new Set([");
+assert.ok(actionsStart > 0, "the action table is declared");
+const actionCodes = [...client.slice(actionsStart, client.indexOf("]);", actionsStart)).matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);
+assert.ok(actionCodes.length > 0, "at least one advice is actionable");
+const segmentOfCode = new Map(adviceCodes);
+for (const code of actionCodes) {
+  const segment = segmentOfCode.get(code);
+  assert.ok(segment !== undefined, `${code} has a locale segment`);
+  for (const [name, dict] of [["zh", zh], ["en", en]]) {
+    assert.ok(dict.has(`advice.${segment}.ran`), `${name} past-tense line for ${code}`);
+  }
+  const key = `advice.${segment}.ran`;
+  assert.notEqual(dictValue("DICT_ZH", key), dictValue("DICT_EN", key), `${key} is translated, not copied`);
+}
+
 process.stdout.write(`check: locales OK (${String(zh.size)} keys, ${String(asked.size)} requested)\n`);
 NODE
 

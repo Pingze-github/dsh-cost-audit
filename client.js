@@ -134,6 +134,12 @@ window.__ModuleLoader__.load({
 			"advice.toolFailures.instruction": "{tool} 已经连续失败多次。停下来把完整错误读一遍，说明根因和下一步方案，不要重复同样的调用。",
 			"advice.cacheHitDrop.action": "让它排查缓存",
 			"advice.cacheHitDrop.instruction": "本会话的缓存命中率偏低。查清楚是什么在每一轮改变请求头或前缀（AGENTS.md、技能注入、系统提示），找出并说明。",
+			"advice.contextReread.ran": "已执行 /compact",
+			"advice.fragmentedTools.ran": "已发出合并指令",
+			"advice.repeatedTarget.ran": "已发出停止重读的指令",
+			"advice.idleGrinding.ran": "已发出进度汇报指令",
+			"advice.toolFailures.ran": "已发出排障指令",
+			"advice.cacheHitDrop.ran": "已发出排查缓存的指令",
 			"verdict.improved": "已采纳 · 有改善",
 			"verdict.steady": "已采纳 · 基本持平",
 			"verdict.worse": "已采纳 · 反而变差",
@@ -146,6 +152,11 @@ window.__ModuleLoader__.load({
 			"verdict.metric.repeat": "重复调用占比",
 			"verdict.metric.hit": "缓存命中率",
 			"verdict.metric.error": "工具失败占比",
+			"verdict.spent": "本次花费 {cost}",
+			"verdict.baseline": "基线 {label} {value}",
+			"verdict.remaining.requests": "还差 {n} 次模型调用判定",
+			"verdict.remaining.toolCalls": "还差 {n} 次工具调用判定",
+			"verdict.remaining.steps": "还差 {n} 步判定",
 		};
 
 		const DICT_EN = {
@@ -237,6 +248,12 @@ window.__ModuleLoader__.load({
 			"advice.toolFailures.instruction": "{tool} has failed repeatedly. Stop, read the full error, and state the root cause and your next plan; do not repeat the same call.",
 			"advice.cacheHitDrop.action": "Ask it to investigate",
 			"advice.cacheHitDrop.instruction": "This session's cache hit rate is low. Find out what changes the request head or prefix every turn (AGENTS.md, skill injection, system prompt) and report it.",
+			"advice.contextReread.ran": "Ran /compact",
+			"advice.fragmentedTools.ran": "Sent the merge instruction",
+			"advice.repeatedTarget.ran": "Sent the stop-re-reading instruction",
+			"advice.idleGrinding.ran": "Sent the status-report instruction",
+			"advice.toolFailures.ran": "Sent the read-the-error instruction",
+			"advice.cacheHitDrop.ran": "Sent the cache-investigation instruction",
 			"verdict.improved": "Adopted · improved",
 			"verdict.steady": "Adopted · about the same",
 			"verdict.worse": "Adopted · got worse",
@@ -249,6 +266,11 @@ window.__ModuleLoader__.load({
 			"verdict.metric.repeat": "Repeat-call share",
 			"verdict.metric.hit": "Cache hit rate",
 			"verdict.metric.error": "Tool failure share",
+			"verdict.spent": "Cost {cost}",
+			"verdict.baseline": "Baseline {label} {value}",
+			"verdict.remaining.requests": "{n} more model calls before a verdict",
+			"verdict.remaining.toolCalls": "{n} more tool calls before a verdict",
+			"verdict.remaining.steps": "{n} more steps before a verdict",
 		};
 
 		//#endregion
@@ -324,7 +346,8 @@ window.__ModuleLoader__.load({
 			".dshstats-verdictState{color:var(--dsw-alias-label-secondary);font-weight:500}",
 			".dshstats-verdict-improved .dshstats-verdictState{color:var(--dsw-alias-state-success-primary)}",
 			".dshstats-verdict-worse .dshstats-verdictState{color:var(--dsw-alias-state-error-primary)}",
-			".dshstats-verdictDetail,.dshstats-verdictSample{color:var(--dsw-alias-label-tertiary)}"
+			".dshstats-verdictRan{color:var(--dsw-alias-label-secondary)}",
+			".dshstats-verdictDetail,.dshstats-verdictSample,.dshstats-verdictSpent,.dshstats-verdictRemaining{color:var(--dsw-alias-label-tertiary)}"
 		].join("");
 
 		const STYLE_TAG = "dsh-stats/pills.css";
@@ -981,10 +1004,11 @@ window.__ModuleLoader__.load({
 		 * @param baseline - the metrics object captured at adoption.
 		 * @param current - the metrics object now.
 		 * @param t - locale seat.
-		 * @returns the verdict state and its one-line evidence.
+		 * @returns the verdict state, its one-line evidence, and — while the
+		 *   sample is still short — how much more evidence it is waiting for.
 		 */
 		function assessAdoption(code, baseline, current, t) {
-			if (baseline === undefined || current === undefined) return { state: "waiting", detail: null };
+			if (baseline === undefined || current === undefined) return { state: "waiting", detail: null, remaining: null };
 			const since = {
 				requests: current.requests - baseline.requests,
 				toolCalls: current.toolCalls - baseline.toolCalls,
@@ -993,29 +1017,37 @@ window.__ModuleLoader__.load({
 			if (code === "idle-grinding") {
 				const edits = current.productiveCalls - baseline.productiveCalls;
 				const detail = t("verdict.done", { edits, steps: current.stepsSinceProductive });
-				if (since.steps < 3) return { state: "waiting", detail };
-				if (current.stepsSinceProductive < current.steps && edits > 0) return { state: "improved", detail };
-				if (edits === 0 && current.stepsSinceProductive >= baseline.stepsSinceProductive) return { state: "worse", detail };
-				return { state: "steady", detail };
+				if (since.steps < 3) return { state: "waiting", detail, remaining: t("verdict.remaining.steps", { n: 3 - since.steps }) };
+				if (current.stepsSinceProductive < current.steps && edits > 0) return { state: "improved", detail, remaining: null };
+				if (edits === 0 && current.stepsSinceProductive >= baseline.stepsSinceProductive) return { state: "worse", detail, remaining: null };
+				return { state: "steady", detail, remaining: null };
 			}
 			const plan = VERDICTS[code];
-			if (plan === undefined) return { state: "waiting", detail: null };
+			if (plan === undefined) return { state: "waiting", detail: null, remaining: null };
 			const sample = since[plan.unit];
-			// With nothing measured yet there is no "after" to show — a 0/1
-			// division would print a meaningless 0% or 100%.
-			if (sample === 0) return { state: "waiting", detail: null };
+			const label = t(`verdict.metric.${plan.metric}`);
 			const before = metricValue(plan.metric, baseline);
+			// With nothing measured yet there is no "after" to show — a 0/1
+			// division would print a meaningless 0% or 100%. The baseline is
+			// still worth printing: it is the evidence that the click landed.
+			if (sample === 0) {
+				return {
+					state: "waiting",
+					detail: t("verdict.baseline", { label, value: metricText(plan.metric, before, t) }),
+					remaining: t(`verdict.remaining.${plan.unit}`, { n: plan.sample })
+				};
+			}
 			const after = metricValue(plan.metric, { ...current, requests: since.requests, toolCalls: since.toolCalls, promptTokens: current.promptTokens - baseline.promptTokens, cacheReadTokens: current.cacheReadTokens - baseline.cacheReadTokens, fastCalls: current.fastCalls - baseline.fastCalls, repeatCalls: current.repeatCalls - baseline.repeatCalls, toolErrors: current.toolErrors - baseline.toolErrors });
-			const detail = t("verdict.metric", { label: t(`verdict.metric.${plan.metric}`), before: metricText(plan.metric, before, t), after: metricText(plan.metric, after, t) });
-			if (sample < plan.sample) return { state: "waiting", detail };
+			const detail = t("verdict.metric", { label, before: metricText(plan.metric, before, t), after: metricText(plan.metric, after, t) });
+			if (sample < plan.sample) return { state: "waiting", detail, remaining: t(`verdict.remaining.${plan.unit}`, { n: plan.sample - sample }) };
 			// `floor` is a share of the baseline, not an absolute move: one
 			// metric is a ratio (short-call share) and another is a token count
 			// (context per request), and both must be judged on the same scale.
-			if (before === 0) return { state: "steady", detail };
+			if (before === 0) return { state: "steady", detail, remaining: null };
 			const move = (plan.better === "lower" ? before - after : after - before) / before;
-			if (move >= plan.floor) return { state: "improved", detail };
-			if (move <= -plan.floor) return { state: "worse", detail };
-			return { state: "steady", detail };
+			if (move >= plan.floor) return { state: "improved", detail, remaining: null };
+			if (move <= -plan.floor) return { state: "worse", detail, remaining: null };
+			return { state: "steady", detail, remaining: null };
 		}
 
 		/** Sessions whose dismissed advice codes are remembered in this browser. */
@@ -1370,8 +1402,16 @@ window.__ModuleLoader__.load({
 				inputActions.setDraft(t(`advice.${ADVICE_KEYS[item.code]}.instruction`, adviceParams(item.code, item.values, t)));
 				inputActions.submit();
 				// Keep the reading taken at this moment: every later verdict is
-				// the difference between it and a later one.
-				const record = { code: item.code, at: Date.now(), baseline: stats.metrics };
+				// the difference between it and a later one. The compaction
+				// tally rides along so the `/compact` action's own bill can be
+				// singled out once the summary call lands.
+				const record = {
+					code: item.code,
+					at: Date.now(),
+					baseline: stats.metrics,
+					compactions: stats.compaction?.count ?? 0,
+					compactionCost: stats.compaction?.summaryCostNano ?? 0
+				};
 				const next = adopted.some((entry) => entry.code === item.code)
 					? adopted.map((entry) => (entry.code === item.code ? record : entry))
 					: adopted.concat([record]);
@@ -1424,6 +1464,16 @@ window.__ModuleLoader__.load({
 									"div",
 									{ className: `dshstats-verdict dshstats-verdict-${verdict.state}` },
 									h("span", { className: "dshstats-verdictState" }, t(`verdict.${verdict.state}`)),
+									// "Adopted" alone reads exactly like "nothing
+									// happened"; name the thing that ran. For
+									// `/compact` the command's own bill is
+									// measurable too — its summary call lands a
+									// moment later, so this may fill in on a
+									// later render rather than immediately.
+									action ? h("span", { className: "dshstats-verdictRan" }, t(`advice.${segment}.ran`)) : null,
+									record.compactions !== undefined && stats.compaction !== undefined && stats.compaction.count > record.compactions && stats.compaction.summaryCostNano > record.compactionCost
+										? h("span", { className: "dshstats-verdictSpent" }, t("verdict.spent", { cost: formatCny(stats.compaction.summaryCostNano - record.compactionCost) }))
+										: null,
 									verdict.detail === null ? null : h("span", { className: "dshstats-verdictDetail" }, verdict.detail),
 									h(
 										"span",
@@ -1432,7 +1482,8 @@ window.__ModuleLoader__.load({
 											calls: Math.max(0, stats.metrics.toolCalls - (record.baseline?.toolCalls ?? 0)),
 											requests: Math.max(0, stats.metrics.requests - (record.baseline?.requests ?? 0))
 										})
-									)
+									),
+									verdict.remaining === null ? null : h("span", { className: "dshstats-verdictRemaining" }, verdict.remaining)
 								)
 							: action
 								? h(

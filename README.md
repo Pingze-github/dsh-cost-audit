@@ -108,6 +108,15 @@ verdict that keeps updating as the session runs:
 | Adopted · got worse | it moved the wrong way by more than the floor |
 | Adopted · too early to tell | not enough calls since adoption to judge; the panel says how many |
 
+The verdict block never prints a bare state. It always names **what actually
+ran** (`Ran /compact`, `Sent the merge instruction`, …), because "Adopted · too
+early to tell" on its own is indistinguishable from a click that did nothing —
+which is exactly how it read the first time. While the sample is still short it
+also prints the **baseline** it captured and **how much more evidence** it is
+waiting for, and for `/compact` it prints the **command's own bill** once the
+summary call lands (`Cost ¥0.42`). That last line needs the compaction tally
+recorded at click time, so adoptions made before it existed simply omit it.
+
 The reading is **since adoption**, not a lifetime average that history would
 drown out: the browser snapshots the cumulative counters the moment you click and
 subtracts them from a later reading. The metric per tip is the one that tip is

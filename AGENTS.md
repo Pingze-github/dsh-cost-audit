@@ -127,6 +127,16 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   metric is a ratio and another is a token count; comparing an absolute move
   against a share reported "got worse" for a 0.1% drift. Compare
   `(before - after) / before` and guard `before === 0`.
+- **An adopted verdict must name the action and the baseline.** The first
+  adoption that shipped printed "Adopted · too early to tell" with no numbers,
+  and the user read it as "I clicked and nothing happened" — even though
+  `command/run` + `command/done` in the session log proved `/compact` had run and
+  the context had already dropped from 280K to 46K per request. Every actionable
+  code therefore carries an `advice.<segment>.ran` past-tense line (check.sh
+  asserts one exists per code in `ADVICE_ACTIONS`), the baseline reading prints
+  while the sample is short, and `/compact`'s own bill is diffed from the
+  `compaction.count` / `summaryCostNano` snapshotted into the record at click
+  time.
 - **The fold's `wire.view` is memoized on the state reference**, so anything read
   from the wall clock inside `statsView` freezes until the next event. Daily
   spend is therefore folded into a keyed map by `dayOf(event.time)` and the
