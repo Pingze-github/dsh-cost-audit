@@ -1,200 +1,193 @@
+**中文** | [English](README.en.md)
+
 # DSH Cost Audit
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that
-answers one question: **where did the money go, and did acting on it help?**
+一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件，只回答一个问题：
+**钱花到哪去了，照它说的做到底有没有用？**
 
-It puts cost in RMB on the two surfaces the harness already uses for statistics —
-under each turn, and under the whole session — and it counts things nothing else
-in the tree counts, starting with the summarization call a context compaction
-bills (split from the compactions you asked for yourself). On top of that sits
-the part that makes it an *audit* rather than a dashboard: an advisor that names
-what is actually costing you, offers a one-click fix, and then **re-measures the
-metric after you adopt it**, so "I followed the advice" becomes a number instead
-of a feeling.
+它把人民币花费放进 harness 本来就在用的两个统计位置 —— **每一轮下面**和**整个会话下面**；同时算了一些
+别处都算不到的东西，首先是**上下文压缩那次摘要调用自己的账单**（并且把你手动压的和系统自动压的分开算）。
+在这之上才是让它成为「审计」而不是「看板」的部分：一个建议引擎，会指出到底是什么在花钱、给一个一键采纳的
+动作，**然后在你采纳之后重新测量那个指标** —— 于是「我照做了」变成一个数字，而不是一种感觉。
 
-Everything is rendered in the harness's own stats form: the same icon pill that
-opens a trigger-anchored `dt`/`dd` panel, the same design tokens, the same
-geometry. The official pills are untouched; this plugin adds its own beside them.
+所有界面都用 harness 自己的统计形态渲染：同一个图标胶囊、同一个随锚点定位的 `dt`/`dd` 面板、同一套设计
+token、同一套几何。官方胶囊一个像素都不动，这个插件只是把自己的加在旁边。
 
-## What it adds
+## 它加了什么
 
-**Per turn** — a pill in the assistant actions row, between the copy button and
-the branch button, next to the official "consumed" and "ran for" pills. It shows
-`¥0.01` and opens:
+**每轮** —— 助手动作行里的一个胶囊，位于复制按钮和分支按钮之间，紧挨官方的"消耗"和"耗时"胶囊。它显示
+`¥0.01`，点开是：
 
-| Row | Meaning |
+| 行 | 含义 |
 | --- | --- |
-| Model | the route that served the turn |
-| Cache hit | cache-read share of prompt input, never rounded up to a false 100% |
-| Cache read | prompt tokens served from cache (缓存输入) |
-| Uncached input | prompt tokens billed at the miss rate |
-| Cache write | prompt tokens written to cache (only when non-zero) |
-| Total input | 总输入 tokens over the three disjoint prompt buckets |
-| Output | 输出 tokens, reasoning included |
-| Turn cost | 本轮费用, CNY |
-| **Timing** | 本轮耗时分布 — see below |
+| Model | 这一轮实际走的模型路由 |
+| 缓存命中 | 提示词输入里走缓存的比例，绝不四舍五入成假的 100% |
+| 缓存读取 | 走缓存的输入 token（缓存输入） |
+| 未命中输入 | 按未命中价计费的输入 token |
+| 缓存写入 | 写入缓存的输入 token（非零时才显示） |
+| 总输入 | 三个互不重叠的输入桶之和 |
+| 输出 | 输出 token，含推理内容 |
+| 本轮费用 | 人民币 |
+| **耗时分布** | 本轮耗时去向 —— 见下 |
 
-**Per session** — a pill on the **same line** as the official session stats
-(`1 turns 297 steps · 237 tok/s · 73.2M tok · Cache hit 99.7%`), immediately to
-their right: `¥2.72 · today ¥0.41 · Account balance ¥113.45` — the session total,
-what of it was spent **today**, and the live account balance. A session picked up
-again days later shows today's spend from zero, not the lifetime figure. It opens the same breakdown for
-the whole durable log, plus the timing section and 账户余额 read live from the
-DeepSeek billing API:
+**每会话** —— 一个与官方会话统计**同一行**的胶囊（`1 turns 297 steps · 237 tok/s · 73.2M tok · Cache hit 99.7%`），
+就在它们右边：`¥2.72 · today ¥0.41 · Account balance ¥113.45` —— 会话总额、其中**今天**花了多少、以及
+实时账户余额。隔几天又捡起来的会话，今日花费从零开始算，而不是拿生命周期数字糊弄你。点开是整个持久日志
+的同一套拆解，加上耗时分布，以及从 DeepSeek 账单接口**实时读取**的余额：
 
-| Row | Meaning |
+| 行 | 含义 |
 | --- | --- |
-| Session cost | 会话总费用, CNY |
-| today | 今日 — this session's spend on the browser's calendar day |
-| of which cache re-read | 其中缓存重读 — the part of the bill that is the same context read again |
-| of which compaction | 其中压缩摘要 — the summarize calls' own bill, which **no other display counts** |
-| Cache hit / read / uncached / cache write / total input / output | whole-session token buckets |
-| **Timing** | 会话耗时分布 — see below |
-| Account balance | 总余额, live |
-| Granted / Topped up | 赠送余额 and 充值余额 |
+| 会话总费用 | 人民币 |
+| today | 今日 —— 这个会话在本地日历日上的花费 |
+| 其中缓存重读 | 账单里那部分"同一份上下文又读了一遍" |
+| 其中压缩摘要 | 摘要调用自己的账单 —— **没有任何别的显示会统计它** |
+| 缓存命中 / 读取 / 未命中 / 写入 / 总输入 / 输出 | 整个会话的 token 桶 |
+| **耗时分布** | 见下 |
+| 账户余额 | 实时 |
+| 赠送 / 充值 | 余额构成 |
 
-### Timing breakdown (耗时分布)
+### 耗时分布
 
-Both panels end their usage section with where the time actually went, and the
-tool rows rank their own tool names:
+两个面板的用量部分都以"时间到底去哪了"结尾，工具行按自己的名字排序：
 
-| Row | Meaning |
+| 行 | 含义 |
 | --- | --- |
-| Total wall | 总耗时 — `turn/start` → `turn/end` |
-| LLM time | 模型用时 — `step/start` → `assistant/message`, with the call count |
-| Avg time to first token (TTFT) | 首 token 平均 — `step/start` → first output token |
-| Generation | 模型生成 — first token → settlement, with tok/s |
-| Tool time | 工具调用用时 — `tool/call` → `tool/result`, with the call count |
-| Other overhead | 其他开销 — wall time the two above do not account for |
-| By tool | 工具明细 — the busiest 6 tool names, then one row for the tail |
+| 总耗时 | `turn/start` → `turn/end` |
+| 模型用时 | `step/start` → `assistant/message`，带调用次数 |
+| 首 token 平均（TTFT） | `step/start` → 第一个输出 token |
+| 生成阶段 | 首 token → 结算，带 tok/s |
+| 工具用时 | `tool/call` → `tool/result`，带调用次数 |
+| 其他开销 | 上面两项没覆盖的墙钟时间 |
+| 工具明细 | 最忙的 6 个工具，其余合并成一行 |
 
-### Token-saving tips (省 Token 建议)
+### 省 Token 建议
 
-A fourth pill appears **only while there is something worth saying** — a healthy
-session pays no space for it. It opens a list of data-grounded suggestions, each
-with a severity, a one-line fix, and a per-session Dismiss:
+**只在真的有话可说时才出现**第四个胶囊 —— 健康的会话不为它付任何空间。点开是一串有数据支撑的建议，每条带
+严重程度、一行修法、以及一个按会话记忆的"忽略"：
 
-| Code | Fires when | One click does |
+| 代号 | 触发条件 | 一键做什么 |
 | --- | --- | --- |
-| `context-reread` | cache re-read is ≥ 35% of the session's spend (over 30+ model calls) | **Compact this session** — submits `/compact` |
-| `fragmented-tools` | one tool has 30+ calls, 60%+ of them under 2s | steers the agent to merge the batch into one script |
-| `repeated-target` | the same tool hits the same file/command 4+ times | steers it to read once and locate with grep |
-| `idle-grinding` | 30+ steps with no write, edit, or deliverable | asks for a status report instead of more probing |
-| `tool-failures` | one tool fails 3 times in a row | tells it to stop and read the error |
-| `cache-hit-drop` | hit rate below 85% over 50+ calls | asks it to find what rewrites the request head |
-| `compaction-churn` | 3+ **automatic** compactions, or those summaries cost ≥ 10% of the session | — (a host config value) |
-| `model-retries` | 5+ model retries | — |
-| `balance-low` | the balance covers fewer than five sessions at this burn rate | — (top up) |
+| `context-reread` | 缓存重读 ≥ 会话花费的 35%（且模型调用 ≥ 30 次） | **立即压缩本会话** —— 提交 `/compact` |
+| `fragmented-tools` | 某个工具调用 ≥ 30 次，其中 ≥ 60% 不到 2 秒 | 让 agent 把那一批合并成一个脚本 |
+| `repeated-target` | 同一个工具对同一目标调用 ≥ 4 次 | 让它读一次就记下结论，之后用 grep 定位 |
+| `idle-grinding` | 连续 ≥ 30 步没有 write / edit / 交付物 | 要一份进度汇报，而不是继续摸 |
+| `tool-failures` | 同一工具连续失败 3 次 | 让它停下来把错误读完 |
+| `cache-hit-drop` | 50 次以上调用里命中率低于 85% | 让它查是什么在每轮改请求头 |
+| `compaction-churn` | **系统自动**压缩 ≥ 3 次，或那些摘要花掉 ≥ 会话 10% | ——（宿主配置项） |
+| `model-retries` | 模型重试 ≥ 5 次 | —— |
+| `balance-low` | 按当前烧钱速度，余额撑不过五个会话 | ——（充值） |
 
-A compaction you ran yourself does not count as churn. The re-read tip above
-recommends `/compact`, so counting the compaction that follows it made the
-advisor argue with itself: it asked you to compact and then complained that you
-compacted too often. The count gate started at 2, which meant one automatic
-compaction plus the one this panel requested was already "churn". Only the
-harness's own compactions feed the rule now (attributed from the `command/run`
-that precedes the summary), the count floor is 3, and the cost gate uses their
-share alone. That matters in practice — three of this machine's sessions have
-53, 35 and 17 automatic compactions and zero user-triggered ones.
+**你自己压的那次不算"频繁"。** 上面那条重读建议推荐的就是 `/compact`，所以把紧随其后的那次压缩也算进去，
+会让顾问跟自己吵架：它让你压，压完又嫌你压得太勤。计数门槛一开始是 2 —— 意思是"一次系统自动 + 一次本面板
+请求的"就已经算频繁了。现在只有 **harness 自己决定**的压缩会喂给这条规则（从摘要前面那个 `command/run`
+归属出来），计数门槛提到 3，成本门槛只看它们那一份。这不是纸上谈兵 —— 这台机器上就有三个会话分别是
+53 / 35 / 17 次自动压缩，手动触发零次。
 
-The body of that tip also no longer quotes a `thresholdRatio` figure. It used to
-prescribe "0.8 → 0.3", which was wrong twice over: this machine's preset is
-already `standard-half` at **0.5**, and the plugin cannot read the host's
-compaction configuration anyway. It now states the trade-off (a lower threshold
-means a shorter replay and a cheaper summary, but more of them) and the manual
-line names where the value actually lives.
+这条建议的正文也不再引用任何 `thresholdRatio` 数值了。它曾经写着"从 0.8 降到 0.3"，**错了两次**：这台机器的
+preset 早就是 `standard-half` 的 **0.5**，而且插件本来就**读不到**宿主的压缩配置。现在它只讲取舍（阈值越低，
+每次摘要要回放的历史越短、单次越便宜，但压得越勤），而"要改去哪改"交给那条手动说明。
 
-Money is always rendered to **two decimals** — a ten-thousandth of a yuan is
-not a figure anyone acts on. The one exception is a real cost too small to
-survive that rounding, which reads `<¥0.01` rather than pretending to be free.
+金额一律渲染成**两位小数** —— 万分之一元不是一个有人会据此行动的数字。唯一的例外是真花了钱却小到过不了
+这个四舍五入的，显示 `<¥0.01`，而不是假装它免费。
 
-### Applying a tip
+### 采纳一条建议
 
-Every actionable tip carries a button that submits into **this** session through
-the composer's own action face (`setDraft` + `submit`) — the same path the send
-button takes, so the message lands in the transcript and the agent picks it up on
-its next step (queued as steering when the turn is already running). A tip with
-no honest automated fix carries its own line saying what to do instead — the
-agent preset key to change, the thing to check in the console — because a single
-generic "this one is yours to handle" named no action and read as a shrug.
+每条可执行的建议都有一个按钮，通过输入框自己的动作面（`setDraft` + `submit`）提交进**本会话** —— 走的是
+发送按钮同一条路，所以消息会落在对话记录里，agent 在下一步就会读到（正在跑的轮次会排队作为"引导"）。
+没有诚实自动修法的建议会带上自己那一行说明该做什么 —— 要改哪个 agent preset 键、去控制台看什么 ——
+因为原来那句通用的"这条需要你手动处理"没说出任何动作，读起来像耸肩。
 
-Two guards, both deliberate: the button is **disabled while the composer holds a
-draft**, because acting means writing the composer and a click must never throw
-away what a human typed; and each tip disables itself once sent. Dismissing a tip
-is remembered per session in this browser.
+两道护栏，都是刻意的：**输入框里还有内容时按钮是禁用的**，因为"执行"意味着写输入框，一次点击绝不能丢掉
+人已经打的东西；每条建议发出后自己禁用。忽略是按会话记在这个浏览器里的。
 
-### After you apply one
+### 采纳之后
 
-An applied tip **leaves the pill's count and stays in the list**, marked with a
-verdict that keeps updating as the session runs:
+被采纳的建议**离开胶囊里的计数、但留在列表里**，带一条会随会话继续更新的判定：
 
-| Verdict | Meaning |
+| 判定 | 含义 |
 | --- | --- |
-| Adopted · improved | the metric moved the good way by more than its floor |
-| Adopted · about the same | it moved less than the floor — the change did not register |
-| Adopted · got worse | it moved the wrong way by more than the floor |
-| Adopted · too early to tell | not enough calls since adoption to judge; the panel says how many |
+| 已采纳 · 有改善 | 指标往好的方向动了，超过它的门槛 |
+| 已采纳 · 基本持平 | 动得比门槛小 —— 这次改变没被量出来 |
+| 已采纳 · 反而变差 | 往反方向动了，超过门槛 |
+| 已采纳 · 还在观察 | 采纳之后的样本还不够判；面板会告诉你还差多少 |
 
-The verdict block never prints a bare state. It always names **what actually
-ran** (`Ran /compact`, `Sent the merge instruction`, …), because "Adopted · too
-early to tell" on its own is indistinguishable from a click that did nothing —
-which is exactly how it read the first time. While the sample is still short it
-also prints the **baseline** it captured and **how much more evidence** it is
-waiting for, and for `/compact` it prints the **command's own bill** once the
-summary call lands (`Cost ¥0.42`). That last line needs the compaction tally
-recorded at click time, so adoptions made before it existed simply omit it.
+判定块**从不只印一个状态**。它总会说明**实际执行了什么**（`已执行 /compact`、`已发出合并指令`……），因为
+单独一句"已采纳 · 还在观察"和"点了一下什么也没发生"完全没法区分 —— 而第一次上线时读起来正是后者。样本还
+不够时它同时印出**基线读数**和**还差多少证据**；对 `/compact` 还会在摘要调用落地后补上**这条命令自己的
+花费**（`本次花费 ¥0.42`）。最后这行需要点击那一刻就把压缩计数快照下来，所以更早的采纳记录没有它。
 
-The reading is **since adoption**, not a lifetime average that history would
-drown out: the browser snapshots the cumulative counters the moment you click and
-subtracts them from a later reading. The metric per tip is the one that tip is
-about — context tokens per request, short-call share, repeat-call share, tool
-failure share, cache hit rate — and every floor is a share of the baseline, so a
-token count and a ratio are judged on the same scale. Nothing here calls a model;
-it is arithmetic on the same fold the pills already read.
+读数是**自采纳以来**的，不是会被历史冲淡的生命周期平均：浏览器在你点击的那一刻快照累计计数器，之后用新
+读数相减。每条建议量的是它自己关心的那个指标 —— 每请求上下文 token、短调用占比、重复调用占比、工具失败
+占比、缓存命中率 —— 而每个门槛都是**基线的比例**，这样 token 计数和比率能在同一把尺上判。这里没有任何地方
+调用模型；它只是在胶囊已经读的那份折叠结果上做算术。
 
-A verdict is a *measurement*, not a promise: a metric can improve for reasons the
-tip had nothing to do with. Treat "about the same" as the honest default and the
-numbers as the evidence.
+判定是一次**测量**，不是承诺：指标可能因为跟这条建议毫无关系的原因变好。请把"基本持平"当作诚实的默认值，
+把数字当作证据。
 
-Every one is folded from the durable log — **the advisor never calls a model**,
-because a token-saving feature that spends tokens is self-defeating. The
-thresholds are deliberately conservative and every rule needs a sustained
-pattern: an advisor that cries wolf stops being read.
+每一条都是从持久日志里折叠出来的 —— **建议引擎从不调用模型**，因为一个靠烧 token 来省 token 的功能是自相
+矛盾的。门槛刻意保守，每条规则都要一个持续成立、而不是一次倒霉的模式：会喊狼来了的顾问很快就没人读了。
 
-The interface follows the harness locale: Simplified Chinese under `zh`, English
-under `en`.
+界面跟随 harness 的语言设置：`zh` 下简体中文，`en` 下英文。
 
-## Pricing
+## 全账号报表
 
-Costs are the **official DeepSeek list prices in CNY per 1,000,000 tokens**
-([api-docs.deepseek.com](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)),
-split by billing period. Peak is Beijing time (UTC+8) Monday–Friday
-09:00–12:00 and 14:00–18:00; every other hour, plus all weekend, bills at half.
+会话级数字回答的是"这次对话花了多少"，回答不了"我是不是比以前花得少了" —— 一个会话就是一件活，两件活
+没法比。所以还有第二层读数：一个路由把**所有会话**的按日桶合并成一份日历，成本面板底部多出一段
+**「全账号 · 最近 7 天」**。
 
-| Model family | Cache hit (空闲 / 高峰) | Cache miss (空闲 / 高峰) | Output (空闲 / 高峰) |
+分母是特意挑的，**让建议没法给自己刷分**：
+
+| 行 | 为什么用它 |
+| --- | --- |
+| 每回合 | 分母是**你自己**发的消息数 —— 我们的建议改不动它，所以看趋势最公平 |
+| 每产出编辑 | 每 write / edit / present 一次多少钱 —— 真正的"工作量"分母；纯聊天、纯调研的日子没有产出，显示 — |
+| 每 1K 输出 token | 输入是输出的很多倍时它就高 —— 缓存和上下文的问题都在这里显形 |
+| 重读 / 冷输入 / 输出 | 三项加起来才是总额；只看总数看不出"为什么动了" |
+| 其中压缩摘要 | **是上面三项的子集，不是第四项** —— 摘要调用的 token 本来就是缓存重读或未命中输入 |
+| 高峰占比 | 只报数字，不做建议 |
+
+每一行都自带一句人话解释，中英双语。一个没人看得懂的分母比没有数字更糟：这个面板收到的第一个问题就是
+「这几个里到底哪个才是工作量」。
+
+三条边界会直接印在面板上，别处也请记住：
+
+1. 金额按**配置里的列表价**计算。
+2. `web/deepseek-search-llm-request` 与 `session/title-llm-request` 这两个调用的日志里**没有用量**，
+   所以这是**下界**，不是精确值。
+3. 报表能显示花费变了，**但不能证明是你采纳的建议带来的**。它把分母选成建议改不动的量、把成本拆到可解释；
+   归因永远要你自己把采纳的时间点和趋势对齐。
+
+因为整份表是从持久日志折叠出来的，**历史会回填** —— 不用等一周才能看到一周（上限是最近 90 天）。
+
+## 价格
+
+金额用的是 **DeepSeek 官方人民币列表价，单位：元 / 100 万 token**
+（[api-docs.deepseek.com](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)），按计费时段分开。
+高峰是北京时间（UTC+8）周一至周五 09:00–12:00 与 14:00–18:00；其余时段以及整个周末都是**半价**。
+
+| 模型族 | 缓存命中（空闲 / 高峰） | 缓存未命中（空闲 / 高峰） | 输出（空闲 / 高峰） |
 | --- | --- | --- | --- |
-| `deepseek-flash`, `deepseek-v4.1-flash`, `deepseek-v4-flash` | 0.02 / 0.04 | 1 / 2 | 4 / 8 |
-| `deepseek-v4-pro`, `deepseek-pro` | 0.15 / 0.30 | 4.5 / 9 | 13.5 / 27 |
+| `deepseek-flash`、`deepseek-v4.1-flash`、`deepseek-v4-flash` | 0.02 / 0.04 | 1 / 2 | 4 / 8 |
+| `deepseek-v4-pro`、`deepseek-pro` | 0.15 / 0.30 | 4.5 / 9 | 13.5 / 27 |
 
-A model name that carries neither a `v4` nor a `deepseek` marker is **counted but
-never priced** — the panel shows `—` for its cost and says how many tokens were
-left unpriced, rather than billing a foreign model at DeepSeek's rates.
+一个既不带 `v4` 也不带 `deepseek` 标记的模型名会**被计数但永不计价** —— 面板给它的费用显示 `—`，并说明有
+多少 token 未计价，而不是拿 DeepSeek 的价目表去给一个国外模型计费。
 
-Costs are an estimate: they are computed from provider-reported usage, not read
-back from a billing statement. **The account balance is not an estimate** — it is
-a live read, so it is the ground truth to check the estimate against.
+费用是**估算**：它由供应商回报的用量算出，不是从账单对回来的。**但账户余额不是估算** —— 它是实时读取的，
+所以拿它去校准估算。
 
-## Config
+## 配置
 
-Every field is optional; overrides go in a profile patch layer with the same id.
+每个字段都是可选的；覆盖写进同 id 的 profile 补丁层。
 
 ```yaml
 - id: dsh-cost-audit
   config:
-    baseUrl: "https://api.deepseek.com"   # billing API origin
-    credentialRef: "DEEPSEEK_API_KEY"     # reference resolved through ctx.credentials
-    balanceCacheMs: 60000                 # how long one balance read is reused
-    requestTimeoutMs: 8000                # upstream timeout
-    pricing:                              # CNY per 1,000,000 tokens
+    baseUrl: "https://api.deepseek.com"   # 账单接口的源
+    credentialRef: "DEEPSEEK_API_KEY"     # 经 ctx.credentials 解析的引用
+    balanceCacheMs: 60000                 # 一次余额读取复用多久
+    requestTimeoutMs: 8000                # 上游超时
+    pricing:                              # 元 / 100 万 token
       flash:
         peak: { cacheHit: 0.04, cacheMiss: 2, output: 8 }
         off:  { cacheHit: 0.02, cacheMiss: 1, output: 4 }
@@ -203,73 +196,66 @@ Every field is optional; overrides go in a profile patch layer with the same id.
         off:  { cacheHit: 0.15, cacheMiss: 4.5, output: 13.5 }
 ```
 
-## Install
+## 安装
 
 ```bash
 dsh plugin --profile web add github:Pingze-github/dsh-cost-audit
 ```
 
-Then **reload the browser page** to pick up the client bundle. From a checkout
-you are editing, install it as a live link instead:
+然后**刷新浏览器页面**以加载客户端 bundle。如果你是在自己改的 checkout 里，用实时链接装：
 
 ```bash
 dsh plugin --profile web add link:/path/to/dsh-cost-audit
 ```
 
-`link:` keeps the checkout live, so edits to `index.js` / `client.js` are served
-without reinstalling. `dsh-hotswap` (if installed) hot-mounts a new bundle entry
-from the written `dsh.profile.bundles` — no `dsh` restart, which matters because
-restarting `dsh web` kills the session hosting it.
+`link:` 让 checkout 保持实时，改 `index.js` / `client.js` 不需要重装。装了 `dsh-hotswap` 的话，它会根据写进
+`dsh.profile.bundles` 的新条目热挂载 —— 不需要重启 `dsh`；这一点很重要，因为重启 `dsh web` 会杀掉正在
+承载它的那个会话。
 
-The scripts under `scripts/` verify against a **running** deployment, not a
-fixture: `check.sh` is the offline gate, `smoke.sh` sweeps every session on the
-machine through the live route, and `gui-probe.mjs` renders the real GUI in
-headless Chromium. `smoke.sh` needs `DSH_HOME` and an authenticated URL (it reads
-one from `/var/log/dsh-web.log`, or `DSH_STATS_URL`).
+`scripts/` 下的脚本是**对着正在运行的部署**验证的，不是对着夹具：`check.sh` 是离线闸门，`smoke.sh` 通过实时
+路由扫过这台机器上的每一个会话，`gui-probe.mjs` 用无头 Chromium 渲染真实界面。`smoke.sh` 需要 `DSH_HOME` 和
+一个带认证的 URL（它会从 `/var/log/dsh-web.log` 里读一个，或者用 `DSH_STATS_URL`）。
 
-## How it works
+⚠️ **重命名一个 `link:` 安装的插件会留下一个卸不掉的开机条目**，而新旧两个名字都指向同一个 `client.js`，浏览器
+会把同一个 bundle 执行两次并报 `duplicate factory registration`，整个插件列表都会加载失败。补救办法是把
+bundle 从 profile 清单里摘掉再加回去（每条条目会重新解析自己的路径），不是重启 `dsh web`。
 
-- **Host half** (`index.js`) registers one session projection, `dshCostAudit`, that
-  folds the whole durable log into per-turn and whole-session billed buckets with
-  their CNY cost. It rides the same pipeline as the harness's own `tokenUsage` /
-  `sessionStats` units, so figures stay complete however much history a client
-  has paged in. Retry accounting mirrors `token-meter`: an Assistant settlement
-  replaces its own `(turn, step)` slot, and `llm/retry-started` closes that slot
-  so a retried attempt adds instead.
-- **Host half** also registers one exact Connection Fetch route,
-  `/api/dsh-cost-audit.balance`, which serves the account balance and an on-demand
-  fold of any session. The fold exists because the projection pipeline only
-  serves a unit to a client once that session has a materialized cell: a session
-  whose persisted projection checkpoint predates this plugin has no `dshCostAudit`
-  row, and the route closes that gap from the same unit definition.
-- **Client half** (`client.js`) registers into the harness's
-  `conversation.chat.assistant-actions` and `conversation.composer.dock` slots.
-  It carries no build step: it is a hand-written bundle in the
-  `window.__ModuleLoader__.load({ id, factory })` form, so the package installs
-  straight from a checkout.
-- **Daily spend** is folded by local calendar day (the host's clock, which is the
-  browser's too) and kept for the newest 31 days, so a session carried across
-  months does not grow its checkpoint without bound.
-- **Session-row placement** is measured, not hard-coded, and the pair stays
-  centred. The composer dock stacks its slot entries and the official stats row
-  is a centred flex row this plugin does not own, so three things are measured:
-  the row is lifted by the official row's height, its content indented to start
-  where the official content ends, and the official row is shifted left by half
-  of what this pill adds (a `translateX` this plugin sets and clears, never a
-  layout change) so the two read as one centred group. A longer official label,
-  a changed font size, or a resized window all land in the right place; when the
-  group would not fit in the band, the row falls back to a centred line of its
-  own with the official row left exactly as the harness drew it.
+## 它是怎么工作的
 
-## Layout
+- **宿主半边**（`index.js`）注册一个会话投影 `dshCostAudit`，把整份持久日志折叠成"每轮"和"整会话"的计费桶
+  及其人民币费用。它走的是 harness 自己的 `tokenUsage` / `sessionStats` 同一条管线，所以客户端翻了多长的
+  历史，数字都是完整的。重试记账对齐 `token-meter`：一次助手结算**替换**它自己那个 `(turn, step)` 槽位，而
+  `llm/retry-started` 会先把槽位关掉，于是重试那次是**相加**。
+- **宿主半边**还注册两条 exact Connection Fetch 路由：`/api/dsh-cost-audit.balance` 提供账户余额和任意会话的
+  按需折叠，`/api/dsh-cost-audit.report` 把所有会话的按日桶合并成一份日历。按需折叠存在的原因是：投影管线
+  只会在一个会话已经有物化单元之后才把它发给客户端 —— 持久投影检查点早于本插件的会话没有 `dshCostAudit`
+  那一行，而这条路由用同一个单元定义把这个缺口补上。报表路由要折叠一百多个会话，所以它缓存 60 秒。
+- **客户端半边**（`client.js`）注册进 harness 的 `conversation.chat.assistant-actions` 与
+  `conversation.composer.dock` 两个插槽。它**没有构建步骤**：是一个手写的
+  `window.__ModuleLoader__.load({ id, factory })` 形式的 bundle，所以这个包可以直接从 checkout 装。
+- **按日花费**按本地日历日折叠（宿主的时钟，也是浏览器的时钟），保留**最近 90 天**，于是一个跨了几个月还在
+  用的会话不会让检查点无限膨胀。每个日桶带三套互不混淆的口径：token 轴（重读 + 冷输入 + 输出）等于当日总额，
+  费率轴（高峰 + 非高峰）也等于当日总额，而压缩摘要是 token 轴的**子集**、不是并列的第四项。
+- **会话行的位置是量出来的**，不是写死的，并且两个胶囊整体保持居中。输入框 dock 是**堆叠**它的插槽条目的，而
+  官方统计行是一个本插件并不拥有的居中 flex 行，所以要量三件事：整行按官方行的高度上提、内容缩进到官方内容
+  结束的位置、官方行再向左平移本胶囊宽度的一半（用本插件设置和清除的 `translateX`，绝不改布局），这样两个才
+  读起来像一个居中的整体。官方标签变长、字号变了、窗口缩放，都会自动落在对的位置；当整组一行放不下时，本行
+  回退成自己的一行居中，官方行保持 harness 画的原样。
+
+## 目录
 
 ```
-index.js            host half: dshCostAudit projection + /api/dsh-cost-audit.balance route
-index.d.ts          public types + the SessionProjectionMap augmentation
-client.js           browser half: the two slot entries
-cordis.patch.yml    bundle patch (mounts the host entry)
-scripts/check.sh    the project's single success criterion
-scripts/check.mjs   host-half behaviour: pricing, retry accounting, route, fold
-scripts/link-deps.sh  links node_modules at the running harness for check.sh
-scripts/gui-probe.mjs headless-Chromium probe of the live GUI
+index.js             宿主半边：dshCostAudit 投影 + balance / report 两条路由
+index.d.ts           公开类型 + SessionProjectionMap 的模块增强
+client.js            浏览器半边：两个插槽条目
+cordis.patch.yml     bundle 补丁（挂载宿主条目）
+scripts/check.sh     本项目唯一的成功标准
+scripts/check.mjs    宿主半边行为：计价、重试记账、路由、折叠
+scripts/smoke.sh     一次调用做完运行时验证（闸门 + 全机会话不变式 + 可选渲染）
+scripts/link-deps.sh 把 node_modules 指向正在运行的 harness，供 check.sh 用
+scripts/gui-probe.mjs 真实界面的无头 Chromium 探针
 ```
+
+## 授权
+
+MIT。
