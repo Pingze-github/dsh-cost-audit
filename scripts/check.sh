@@ -117,6 +117,45 @@ for (const code of actionCodes) {
   assert.notEqual(dictValue("DICT_ZH", key), dictValue("DICT_EN", key), `${key} is translated, not copied`);
 }
 
+// The other half of the same invariant: a tip with no button has to say what the
+// human is meant to do instead. It used to render one generic "this one is yours
+// to handle" line, which named no action and read as a shrug.
+for (const [code, segment] of adviceCodes) {
+  if (actionCodes.includes(code)) continue;
+  for (const [name, dict] of [["zh", zh], ["en", en]]) {
+    assert.ok(dict.has(`advice.${segment}.manual`), `${name} manual line for ${code}`);
+  }
+  const key = `advice.${segment}.manual`;
+  assert.notEqual(dictValue("DICT_ZH", key), dictValue("DICT_EN", key), `${key} is translated, not copied`);
+}
+assert.ok(!zh.has("advice.manual"), "the generic manual line is gone — every code carries its own");
+assert.ok(!/t\("advice\.manual"\)/.test(client), "the panel no longer asks for the removed generic line");
+
+// A body that asks for {automatic} renders the literal "undefined" unless
+// adviceParams returns that key, and a param nobody interpolates is dead
+// weight. Neither shows up in any other check: the key exists, the string
+// exists, and only the two together are wrong.
+const paramsStart = client.indexOf("function adviceParams(");
+assert.ok(paramsStart > 0, "adviceParams is declared");
+const paramKeys = new Map();
+for (const match of client.slice(paramsStart, client.indexOf("\n\t\t}", paramsStart)).matchAll(/case "([a-z-]+)":\s*return \{([^}]*)\}/g)) {
+  paramKeys.set(match[1], new Set([...match[2].matchAll(/([a-zA-Z]\w*)\s*:/g)].map((key) => key[1])));
+}
+assert.equal(paramKeys.size, adviceCodes.length, "adviceParams has a case for every tabled code");
+for (const [code, segment] of adviceCodes) {
+  const declared = paramKeys.get(code);
+  assert.ok(declared !== undefined, `adviceParams handles ${code}`);
+  const used = new Set();
+  for (const suffix of ["title", "body", "action", "instruction", "ran", "manual"]) {
+    for (const name of ["DICT_ZH", "DICT_EN"]) {
+      const text = dictValue(name, `advice.${segment}.${suffix}`);
+      if (text === null) continue;
+      for (const placeholder of text.matchAll(/\{([a-zA-Z]\w*)\}/g)) used.add(placeholder[1]);
+    }
+  }
+  assert.deepEqual([...used].sort(), [...declared].sort(), `every placeholder ${code} uses is one adviceParams supplies, and vice versa`);
+}
+
 process.stdout.write(`check: locales OK (${String(zh.size)} keys, ${String(asked.size)} requested)\n`);
 NODE
 

@@ -137,6 +137,21 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   while the sample is short, and `/compact`'s own bill is diffed from the
   `compaction.count` / `summaryCostNano` snapshotted into the record at click
   time.
+- **An advisor must be closed under its own advice.** The re-read tip
+  recommends `/compact`; the churn tip fired at `compaction.count >= 2`. So
+  doing what the panel said produced a second compaction and an immediate
+  complaint that the user compacted too often — the advisor arguing with itself.
+  Only compactions the *harness* decided on now feed the rule: `command/run` with
+  `name: "compact"` sets `pendingCompactAt` (a five-minute window), the next
+  `compaction/summary` claims it into `compaction.manual` / `manualCostNano`, and
+  the marker is spent either way so it cannot swallow a later automatic one.
+  Bumped `stateVersion` to 6. Check any rule you add against the actions the
+  other rules offer.
+- **A locale placeholder and its parameter are only correct together.** A body
+  asking for `{automatic}` renders the literal "undefined" when `adviceParams`
+  returns something else, and nothing else catches it: the key exists, the string
+  exists. `check.sh` now compares every `{placeholder}` in a code's strings
+  against the object that code's `adviceParams` case returns, in both directions.
 - **The fold's `wire.view` is memoized on the state reference**, so anything read
   from the wall clock inside `statsView` freezes until the next event. Daily
   spend is therefore folded into a keyed map by `dayOf(event.time)` and the

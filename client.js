@@ -108,7 +108,8 @@ window.__ModuleLoader__.load({
 			"advice.repeatedTarget.title": "同一目标反复调用",
 			"advice.repeatedTarget.body": "{tool} 对同一个目标调用了 {count} 次：{target}",
 			"advice.compactionChurn.title": "压缩偏频繁 / 摘要本身在花钱",
-			"advice.compactionChurn.body": "已压缩 {count} 次，摘要本身花掉 {cost}（{percent}% 会话费用、{tokens} tok），重写了 {shadowed} tok 上下文。把 thresholdRatio 从 0.8 降到 0.3，每次摘要回放可从约 640K 降到约 140K。",
+			"advice.compactionChurn.body": "系统自己压缩了 {automatic} 次（你手动触发的 {manual} 次不计入），这 {automatic} 次摘要花掉 {cost}（{percent}% 会话费用），累计重写 {shadowed} tok 上下文。阈值 thresholdRatio 越低，每次摘要要回放的历史越短、单次越便宜，但压得越勤 —— 这是次数与单价的取舍，不是单向的省。",
+			"advice.compactionChurn.manual": "要改就改 agent preset 里的 `compaction-basic.thresholdRatio` —— 插件读不到也改不了宿主配置。",
 			"advice.toolFailures.title": "同一工具连续失败",
 			"advice.toolFailures.body": "{tool} 连续失败 {consecutive} 次。再试一次大概率还是一样 —— 先停下来看错误。",
 			"advice.modelRetries.title": "模型重试偏多",
@@ -119,7 +120,8 @@ window.__ModuleLoader__.load({
 			"advice.cacheHitDrop.body": "{calls} 次调用里命中率 {percent}%。未命中按约 50 倍计价 —— 查一下是否有东西每轮在改请求头（AGENTS.md、技能注入）。",
 			"advice.balanceLow.title": "余额偏低",
 			"advice.balanceLow.body": "余额 {balance}，本会话已花 {cost}。按这个速度不多了。",
-			"advice.manual": "这条需要你手动处理",
+			"advice.modelRetries.manual": "先确认是限速、超时，还是请求本身有问题 —— 重试次数没有开关可调。",
+			"advice.balanceLow.manual": "去 DeepSeek 控制台充值 —— 插件只能读余额，不能充值。",
 			"advice.sent": "已发送",
 			"advice.blocked": "输入框里还有内容 —— 先清空再执行",
 			"advice.contextReread.action": "立即压缩本会话",
@@ -222,7 +224,8 @@ window.__ModuleLoader__.load({
 			"advice.repeatedTarget.title": "Same target again and again",
 			"advice.repeatedTarget.body": "{tool} hit the same target {count} times: {target}",
 			"advice.compactionChurn.title": "Compaction churn, and its own bill",
-			"advice.compactionChurn.body": "{count} compactions; the summaries themselves cost {cost} ({percent}% of the session, {tokens} tok) and rewrote {shadowed} tok of context. Lowering thresholdRatio from 0.8 to 0.3 shrinks each replay from ~640K to ~140K.",
+			"advice.compactionChurn.body": "The harness compacted on its own {automatic} times ({manual} manual ones are not counted); those summaries cost {cost} ({percent}% of the session) and rewrote {shadowed} tok of context. A lower thresholdRatio shortens each replay and cheapens each summary, but makes them more frequent — that trades frequency against unit price, it is not a one-way saving.",
+			"advice.compactionChurn.manual": "Change `compaction-basic.thresholdRatio` in the agent preset — the plugin can neither read nor write host configuration.",
 			"advice.toolFailures.title": "Repeated tool failure",
 			"advice.toolFailures.body": "{tool} failed {consecutive} times in a row. Another attempt probably fails the same way — stop and read the error.",
 			"advice.modelRetries.title": "Many model retries",
@@ -233,7 +236,8 @@ window.__ModuleLoader__.load({
 			"advice.cacheHitDrop.body": "{percent}% hit rate over {calls} calls. A miss bills at roughly 50× — check whether something rewrites the request head every turn (AGENTS.md, skill injection).",
 			"advice.balanceLow.title": "Balance running low",
 			"advice.balanceLow.body": "Balance {balance}; this session has spent {cost}.",
-			"advice.manual": "This one is yours to handle",
+			"advice.modelRetries.manual": "Check whether it is rate limiting, a timeout, or the request itself — there is no retry setting to turn down.",
+			"advice.balanceLow.manual": "Top up in the DeepSeek console — the plugin can read the balance but not add to it.",
 			"advice.sent": "Sent",
 			"advice.blocked": "Clear the composer first",
 			"advice.contextReread.action": "Compact this session",
@@ -914,10 +918,10 @@ window.__ModuleLoader__.load({
 					return { tool: values.tool, target: values.target, count: values.count };
 				case "compaction-churn":
 					return {
-						count: values.count,
+						automatic: values.automatic,
+						manual: values.manual,
 						percent: values.percent,
 						cost: formatCny(values.costNano),
-						tokens: formatCompact(values.tokens, t),
 						shadowed: formatCompact(values.shadowed, t)
 					};
 				case "tool-failures":
@@ -1497,7 +1501,7 @@ window.__ModuleLoader__.load({
 										},
 										t(`advice.${segment}.action`)
 									)
-								: h("span", { className: "dshstats-manual" }, t("advice.manual"))
+								: h("span", { className: "dshstats-manual" }, t(`advice.${segment}.manual`))
 					)
 				);
 			});

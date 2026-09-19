@@ -74,9 +74,26 @@ with a severity, a one-line fix, and a per-session Dismiss:
 | `idle-grinding` | 30+ steps with no write, edit, or deliverable | asks for a status report instead of more probing |
 | `tool-failures` | one tool fails 3 times in a row | tells it to stop and read the error |
 | `cache-hit-drop` | hit rate below 85% over 50+ calls | asks it to find what rewrites the request head |
-| `compaction-churn` | 2+ compactions, or the summaries cost ≥ 10% of the session | — (a config value, next session) |
+| `compaction-churn` | 3+ **automatic** compactions, or those summaries cost ≥ 10% of the session | — (a host config value) |
 | `model-retries` | 5+ model retries | — |
 | `balance-low` | the balance covers fewer than five sessions at this burn rate | — (top up) |
+
+A compaction you ran yourself does not count as churn. The re-read tip above
+recommends `/compact`, so counting the compaction that follows it made the
+advisor argue with itself: it asked you to compact and then complained that you
+compacted too often. The count gate started at 2, which meant one automatic
+compaction plus the one this panel requested was already "churn". Only the
+harness's own compactions feed the rule now (attributed from the `command/run`
+that precedes the summary), the count floor is 3, and the cost gate uses their
+share alone. That matters in practice — three of this machine's sessions have
+53, 35 and 17 automatic compactions and zero user-triggered ones.
+
+The body of that tip also no longer quotes a `thresholdRatio` figure. It used to
+prescribe "0.8 → 0.3", which was wrong twice over: this machine's preset is
+already `standard-half` at **0.5**, and the plugin cannot read the host's
+compaction configuration anyway. It now states the trade-off (a lower threshold
+means a shorter replay and a cheaper summary, but more of them) and the manual
+line names where the value actually lives.
 
 Money is always rendered to **two decimals** — a ten-thousandth of a yuan is
 not a figure anyone acts on. The one exception is a real cost too small to
@@ -88,8 +105,9 @@ Every actionable tip carries a button that submits into **this** session through
 the composer's own action face (`setDraft` + `submit`) — the same path the send
 button takes, so the message lands in the transcript and the agent picks it up on
 its next step (queued as steering when the turn is already running). A tip with
-no honest automated fix says "this one is yours to handle" rather than offering a
-button that would do nothing.
+no honest automated fix carries its own line saying what to do instead — the
+agent preset key to change, the thing to check in the console — because a single
+generic "this one is yours to handle" named no action and read as a shrug.
 
 Two guards, both deliberate: the button is **disabled while the composer holds a
 draft**, because acting means writing the composer and a click must never throw

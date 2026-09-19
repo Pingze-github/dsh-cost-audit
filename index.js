@@ -73,6 +73,20 @@ const FRAGMENT_SHARE = 0.6;
 const REPEAT_CALLS = 4;
 /** Summary calls that cost at least this share of the session are worth naming. */
 const COMPACTION_COST_SHARE = 0.1;
+/**
+ * …and this many compactions before "often" means anything. Two is not a
+ * pattern: it is one automatic compaction plus the one the re-read tip asks for.
+ * The count is worth keeping even when the summaries are cheap, because the
+ * summaries' own bill is the *small* half of churn — every compaction throws
+ * away the cached prefix, and the next requests pay the miss rate for it.
+ */
+const COMPACTION_CHURN_RUN = 3;
+/**
+ * How long after a user's `/compact` a `compaction/summary` still counts as the
+ * one that command asked for. The summary lands seconds later in practice; the
+ * window exists so a stale marker cannot swallow an automatic compaction.
+ */
+const MANUAL_COMPACT_WINDOW_MS = 300000;
 /** Model calls before a cache-hit figure is statistically meaningful. */
 const CACHE_SAMPLE = 50;
 /** Below this cache-hit share, input bills at the miss rate far more often. */
@@ -287,6 +301,12 @@ function withTiming(state, turn, delta) {
 const compactionShape = {
   /** Successful `compaction/summary` events. */
   count: z.number().int().nonnegative(),
+  /**
+   * How many of those followed a user's `/compact`. The advisor judges the
+   * automatic ones: a compaction the human asked for — very often because this
+   * plugin told them to — is a deliberate cost, not a leak.
+   */
+  manual: z.number().int().nonnegative(),
   /** `compaction/end` events carrying an error. */
   errors: z.number().int().nonnegative(),
   /** `compaction/prune` events (model-free shadow replacements). */
@@ -295,6 +315,8 @@ const compactionShape = {
   shadowedTokens: z.number().int().nonnegative(),
   /** What the summarization calls themselves billed, in CNY × 1e9. */
   summaryCostNano: z.number().int().nonnegative(),
+  /** The user-triggered share of `summaryCostNano`. */
+  manualCostNano: z.number().int().nonnegative(),
   /** Tokens those summarization calls billed. */
   summaryTokens: z.number().int().nonnegative(),
 };
@@ -303,10 +325,12 @@ const compactionSchema = z.object(compactionShape).strict();
 
 const ZERO_COMPACTION = Object.freeze({
   count: 0,
+  manual: 0,
   errors: 0,
   prunes: 0,
   shadowedTokens: 0,
   summaryCostNano: 0,
+  manualCostNano: 0,
   summaryTokens: 0,
 });
 
@@ -517,6 +541,11 @@ const stateSchema = z
     days: z.record(z.string(), z.number().int().nonnegative()),
     /** What the log says about compaction, and what it cost. */
     compaction: compactionSchema,
+    /**
+     * When the user last ran `/compact`, so the summary it produces can be told
+     * apart from the ones the harness decides on its own.
+     */
+    pendingCompactAt: z.number().nonnegative().nullable(),
     /** Bounded raw tallies the advisor reads. */
     signals: signalsSchema,
     /** callId → dispatched tool call still awaiting its result. */
@@ -769,24 +798,32 @@ function closeToolCall(state, event) {
 function foldCompactionSummary(state, event, pricing) {
   const data = event.data;
   const usage = data?.usage;
+  // A `/compact` the user just ran — quite possibly because the advisory panel
+  // asked them to — owns the next summary inside the window, and nothing else.
+  const manual = state.pendingCompactAt !== null && event.time - state.pendingCompactAt <= MANUAL_COMPACT_WINDOW_MS;
   const compaction = {
     count: state.compaction.count + 1,
+    manual: state.compaction.manual + (manual ? 1 : 0),
     errors: state.compaction.errors,
     prunes: state.compaction.prunes,
     shadowedTokens: state.compaction.shadowedTokens + (Number.isSafeInteger(data?.shadowedTokenCount) ? data.shadowedTokenCount : 0),
     summaryCostNano: state.compaction.summaryCostNano,
+    manualCostNano: state.compaction.manualCostNano,
     summaryTokens: state.compaction.summaryTokens,
   };
+  // Either way the marker is spent: an unclaimed one must not leak into the
+  // next automatic compaction.
+  const base = { ...state, compaction, pendingCompactAt: null };
   if (usage !== null && typeof usage === "object") {
     const model = typeof data.model === "string" && data.model !== "" ? data.model : state.model;
     const bucket = priceUsage(usage, familyOf(model), isPeak(event.time), pricing);
     if (bucket !== null) {
       compaction.summaryCostNano += bucket.costNano;
       compaction.summaryTokens += bucket.pricedTokens + bucket.unpricedTokens;
+      if (manual) compaction.manualCostNano += bucket.costNano;
       const day = dayOf(event.time);
       return {
-        ...state,
-        compaction,
+        ...base,
         total: {
           ...state.total,
           costNano: state.total.costNano + bucket.costNano,
@@ -796,7 +833,7 @@ function foldCompactionSummary(state, event, pricing) {
       };
     }
   }
-  return { ...state, compaction };
+  return base;
 }
 
 //#endregion
@@ -903,15 +940,30 @@ function buildAdvice(state) {
 
   // Compaction churn, and the summarize calls' own bill — spend no other figure
   // in this deployment counts.
-  const compactionShare = total.costNano === 0 ? 0 : state.compaction.summaryCostNano / total.costNano;
-  if (state.compaction.count >= 2 || compactionShare >= COMPACTION_COST_SHARE) {
+  //
+  // Only the *automatic* compactions count, in both gates. The re-read tip above
+  // recommends `/compact`, so charging the user churn for a compaction they ran
+  // on our own advice is the advisor arguing with itself; the one they asked for
+  // is a deliberate cost, and the adopted tip already prints its price.
+  //
+  // The count gate used to be 2, which had the same defect with one automatic
+  // compaction: one plus the one we asked for is not a pattern. Real churn is
+  // common and is not our doing — 53, 35 and 17 automatic compactions in three
+  // of this machine's own sessions, none of them user-triggered.
+  const automatic = {
+    count: state.compaction.count - state.compaction.manual,
+    costNano: state.compaction.summaryCostNano - state.compaction.manualCostNano,
+  };
+  const compactionShare = total.costNano === 0 ? 0 : automatic.costNano / total.costNano;
+  if (automatic.count >= COMPACTION_CHURN_RUN || compactionShare >= COMPACTION_COST_SHARE) {
     advice.push({
       code: "compaction-churn",
       severity: "warn",
       values: {
         count: state.compaction.count,
-        costNano: state.compaction.summaryCostNano,
-        tokens: state.compaction.summaryTokens,
+        automatic: automatic.count,
+        manual: state.compaction.manual,
+        costNano: automatic.costNano,
         shadowed: state.compaction.shadowedTokens,
         percent: Math.round(compactionShare * 100),
       },
@@ -962,7 +1014,7 @@ function createStatsProjection(pricing) {
   let viewValue;
   return {
     key: PROJECTION_KEY,
-    stateVersion: 5,
+    stateVersion: 6,
     stateSchema,
     init: () => ({
       provider: "",
@@ -977,6 +1029,7 @@ function createStatsProjection(pricing) {
       openStep: null,
       days: {},
       compaction: ZERO_COMPACTION,
+      pendingCompactAt: null,
       signals: ZERO_SIGNALS,
       pendingCalls: {},
     }),
@@ -1048,6 +1101,10 @@ function createStatsProjection(pricing) {
         next = { ...next, openStep: null, signals };
       } else if (type === "compaction/summary") {
         next = foldCompactionSummary(next, event, pricing);
+      } else if (type === "command/run") {
+        // A user-issued `/compact` — the only compaction this log can attribute
+        // to a human. `source.kind` is "user" for the one our own panel submits.
+        if (event.data?.name === "compact") next = { ...next, pendingCompactAt: event.time };
       } else if (type === "compaction/end") {
         const failed = typeof event.data?.error === "string" && event.data.error !== "";
         if (failed) next = { ...next, compaction: { ...state.compaction, errors: state.compaction.errors + 1 } };

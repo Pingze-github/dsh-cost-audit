@@ -717,9 +717,12 @@ function toolCalls(count, name, args, ms, time) {
 }
 
 {
-	// Two compactions is churn even when their share of spend is small.
+	// The count gate used to be 2, which meant the re-read tip's own recommended
+	// `/compact` immediately produced a second compaction and this rule fired on
+	// the user's own compliance. Three is a pattern; two is one automatic
+	// compaction plus the one we asked for.
 	const T0 = PEAK;
-	const summary = (seq, id) => [
+	const summary = (seq, id, usage = { inputTokens: 10, outputTokens: 10 }) => [
 		{ type: "compaction/start", seq, time: T0, data: { compactionId: id, turn: null } },
 		{
 			type: "compaction/summary",
@@ -735,13 +738,43 @@ function toolCalls(count, name, args, ms, time) {
 				model: "deepseek-flash",
 				rawOutput: [],
 				llmStreamCall: true,
-				usage: { inputTokens: 10, outputTokens: 10 }
+				usage
 			}
 		},
 		{ type: "compaction/end", seq: seq + 2, time: T0 + 20, data: { compactionId: id, turn: null } }
 	];
-	const codes = adviceCodes([route("deepseek-flash"), ...summary(1, "a"), ...summary(4, "b")]);
-	assert.ok(codes.includes("compaction-churn"), "repeated compaction is churn");
+	const churns = (events) => adviceCodes(events).includes("compaction-churn");
+	/** The `/compact` a user runs — the only compaction the log attributes. */
+	const compact = (seq, time) => ({ type: "command/run", seq, time, data: { commandId: `cmd-${String(seq)}`, name: "compact", args: "", source: { kind: "user" } } });
+
+	assert.ok(churns([route("deepseek-flash"), ...summary(1, "a"), ...summary(4, "b"), ...summary(7, "c")]), "three automatic compactions are churn even when each one is cheap");
+	// The user's actual case: one automatic compaction, one from our own tip,
+	// and real spend that dwarfs both summaries.
+	assert.deepEqual(
+		adviceCodes([route("deepseek-flash"), ...settlements(5, PEAK), ...summary(50, "a"), ...summary(54, "b")]).filter((code) => code === "compaction-churn"),
+		[],
+		"two automatic compactions are not churn"
+	);
+	// A `/compact` the panel itself submitted must not read as churn: the
+	// summary that follows it belongs to that command, in both gates.
+	assert.deepEqual(
+		adviceCodes([route("deepseek-flash"), ...settlements(5, PEAK), compact(40, PEAK), ...summary(42, "a"), compact(60, PEAK), ...summary(62, "b"), compact(80, PEAK), ...summary(82, "c")]).filter(
+			(code) => code === "compaction-churn"
+		),
+		[],
+		"three user-triggered compactions are our own advice, not churn"
+	);
+	// …but the marker is spent by the first summary, even though the next three
+	// land inside the same five-minute window: leak it and only one of the four
+	// compactions counts as automatic, which is the difference asserted here.
+	assert.ok(
+		churns([route("deepseek-flash"), ...settlements(5, PEAK), compact(1, PEAK), ...summary(3, "a"), ...summary(30, "b"), ...summary(60, "c"), ...summary(90, "d")]),
+		"one manual compaction leaves the other three automatic ones counted"
+	);
+	// The cost gate stands alone: one summary that dominates the session is
+	// worth naming no matter how few compactions produced it.
+	const dominating = [route("deepseek-flash"), ...settlements(1, PEAK), ...summary(5, "a", { inputTokens: 100000, outputTokens: 1000 })];
+	assert.ok(churns(dominating), "a single dominating summary is churn on cost alone");
 }
 
 {
