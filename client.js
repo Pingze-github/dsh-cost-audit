@@ -142,6 +142,9 @@ window.__ModuleLoader__.load({
 			"report.peakHint": "高峰是工作日 9-12 点与 14-18 点，单价翻倍 —— 这里只报数字，不做建议",
 			"report.note": "金额按列表价计算。网页搜索与标题生成这两个调用的日志里没有用量，所以这是下界。报表能显示花费变了，但不能证明是你采纳的建议带来的。",
 			"advice.pill": "{count} 条建议",
+			"advice.pillWithObserving": "{count} 条待处理 · {observing} 条观察中",
+			"advice.pillObservingOnly": "{observing} 条观察中",
+			"advice.adoptedTag": "已采纳",
 			"advice.title": "省 Token 建议",
 			"advice.high": "紧急",
 			"advice.warn": "注意",
@@ -282,6 +285,9 @@ window.__ModuleLoader__.load({
 			"report.peakHint": "Peak is Mon-Fri 09-12 and 14-18, at double the price — a figure here, not advice",
 			"report.note": "Amounts use the configured list prices. The web-search and title-generation calls carry no usage in the log, so this is a lower bound. The report shows that spending moved; it cannot show that your own advice caused it.",
 			"advice.pill": "{count} tips",
+			"advice.pillWithObserving": "{count} to do · {observing} observing",
+			"advice.pillObservingOnly": "{observing} observing",
+			"advice.adoptedTag": "Adopted",
 			"advice.title": "Token-saving tips",
 			"advice.high": "Urgent",
 			"advice.warn": "Watch",
@@ -425,6 +431,7 @@ window.__ModuleLoader__.load({
 			".dshstats-verdict-worse .dshstats-verdictState{color:var(--dsw-alias-state-error-primary)}",
 			".dshstats-verdictRan{color:var(--dsw-alias-label-secondary)}",
 			".dshstats-adviceNote{color:var(--dsw-alias-label-caption);line-height:1.35}",
+			".dshstats-tag-done{background:var(--dsw-alias-bg-neutral);color:var(--dsw-alias-label-secondary)}",
 			".dshstats-reportTotal{display:flex;gap:6px;align-items:baseline;font-weight:500}",
 			".dshstats-reportRow{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline}",
 			".dshstats-reportLabel{color:var(--dsw-alias-label-secondary)}",
@@ -1722,6 +1729,24 @@ window.__ModuleLoader__.load({
 		 * healthy session pays no space for it. Advice is dismissed per session
 		 * and remembered in this browser.
 		 */
+		/**
+		 * What the advice pill counts.
+		 *
+		 * Adopted tips leave the open count but stay in the list, so "2 tips"
+		 * after adopting one read as "nothing registered" — the count has to
+		 * name both states or the user cannot tell that their click landed.
+		 *
+		 * @param open - tips still waiting for a decision.
+		 * @param observing - tips already acted on and being measured.
+		 * @param t - locale seat.
+		 * @returns the label, e.g. "2 to do · 1 observing".
+		 */
+		function adviceCountLabel(open, observing, t) {
+			if (observing === 0) return t("advice.pill", { count: open, observing });
+			if (open === 0) return t("advice.pillObservingOnly", { count: open, observing });
+			return t("advice.pillWithObserving", { count: open, observing });
+		}
+
 		function AdvicePill(props) {
 			const { t, stats, sessionId, balance, inputActions, useInput } = props;
 			const seat = useStatDialog();
@@ -1773,7 +1798,17 @@ window.__ModuleLoader__.load({
 				writeDismissed(sessionId, []);
 			};
 			const worst = open.some((item) => item.severity === "high") ? "high" : open.some((item) => item.severity === "warn") ? "warn" : "info";
-			const items = shown.map((item) => {
+			// Sorted so the list reads as a queue: things to decide, then things
+			// already decided and being watched. Without this an adopted tip sits
+			// wherever the host put it, tagged with a live severity, and reads as
+			// unhandled.
+			const ordered = shown
+				.slice()
+				.sort(
+					(left, right) =>
+						Number(adopted.some((entry) => entry.code === left.code)) - Number(adopted.some((entry) => entry.code === right.code))
+				);
+			const items = ordered.map((item) => {
 				const segment = ADVICE_KEYS[item.code] ?? "info";
 				const action = ADVICE_ACTIONS.has(item.code);
 				const record = adopted.find((entry) => entry.code === item.code);
@@ -1784,7 +1819,11 @@ window.__ModuleLoader__.load({
 					h(
 						"div",
 						{ className: "dshstats-adviceHead" },
-						h("span", { className: `dshstats-tag dshstats-tag-${item.severity}` }, t(`advice.${item.severity}`)),
+						h(
+							"span",
+							{ className: `dshstats-tag dshstats-tag-${record === undefined ? item.severity : "done"}` },
+							t(record === undefined ? `advice.${item.severity}` : "advice.adoptedTag")
+						),
 						h("span", { className: "dshstats-adviceTitle" }, t(`advice.${segment}.title`)),
 						h(
 							"button",
@@ -1881,7 +1920,7 @@ window.__ModuleLoader__.load({
 						}
 					},
 					h(ADVICE_ICON, null),
-					h("span", { className: "dshstats-label" }, t("advice.pill", { count: open.length }))
+					h("span", { className: "dshstats-label" }, adviceCountLabel(open.length, adopted.length, t))
 				),
 				panelOf({
 					open: seat.open,
@@ -1889,7 +1928,7 @@ window.__ModuleLoader__.load({
 					pos: seat.pos,
 					icon: h(ADVICE_ICON, null),
 					title: t("advice.title"),
-					value: t("advice.pill", { count: open.length }),
+					value: adviceCountLabel(open.length, adopted.length, t),
 					ariaLabel: t("advice.title"),
 					children: items
 				})
