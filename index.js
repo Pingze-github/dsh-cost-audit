@@ -38,6 +38,8 @@ const PROJECTION_KEY = "dshCostAudit";
  * interceptor ever sees it.
  */
 const BALANCE_PATH = "/api/dsh-cost-audit.balance";
+/** Account-wide daily totals, merged across every session on this machine. */
+const REPORT_PATH = "/api/dsh-cost-audit.report";
 
 /**
  * Official DeepSeek list prices in CNY per 1,000,000 tokens, peak and
@@ -1385,6 +1387,90 @@ async function foldSession(ctx, unit, sessionId) {
   }
 }
 
+/** How long one merged account-wide report is reused before folding again. */
+const REPORT_CACHE_MS = 60000;
+/** Fold at most this many sessions into one report read, so the sweep is bounded. */
+const REPORT_SESSION_CAP = 400;
+
+/**
+ * Fold every session on this machine into one calendar map.
+ *
+ * Per-session figures answer "what did this conversation cost"; they cannot
+ * answer "am I spending less than I used to", because each session is different
+ * work. Only the calendar is shared, which is why the report is built here from
+ * the same day buckets the panel already shows, summed across sessions.
+ *
+ * Deliberately sequential: this runs on the host that is also serving the
+ * conversation, and a burst of parallel log reads would be felt there.
+ *
+ * @param ctx - the owning Cordis context.
+ * @param unit - the registered projection unit.
+ * @returns the merged calendar, or a reason it could not be read.
+ */
+async function foldAccount(ctx, unit) {
+  const query = ctx.get("sessionQuery");
+  if (query === undefined) return { ok: false, reason: "no-session-query" };
+  let records;
+  try {
+    records = await query.listSessions();
+  } catch {
+    return { ok: false, reason: "list-failed" };
+  }
+  if (!Array.isArray(records)) return { ok: false, reason: "list-failed" };
+  const merged = {};
+  let folded = 0;
+  for (const record of records.slice(0, REPORT_SESSION_CAP)) {
+    const id = record?.header?.id;
+    if (typeof id !== "string") continue;
+    let observation;
+    try {
+      observation = await query.observeSession(id, { projectionMode: "none" });
+    } catch {
+      continue;
+    }
+    try {
+      let state = unit.init(observation.header, observation.inheritedEventCount);
+      for (const event of observation.events) state = unit.apply(state, event);
+      for (const [key, day] of Object.entries(state.days)) {
+        const previous = merged[key];
+        if (previous === undefined) {
+          merged[key] = { ...day };
+          continue;
+        }
+        for (const field of DAY_FIELDS) previous[field] += day[field];
+      }
+      folded += 1;
+    } catch {
+      continue;
+    }
+  }
+  return { ok: true, days: recentDays(merged), sessions: folded, scanned: records.length };
+}
+
+/**
+ * The account-wide report, cached briefly.
+ *
+ * Folding every session costs a full log read each, so a panel that re-renders
+ * must not trigger one per render. Nothing here is per-user data the panel
+ * cannot get stale for a minute.
+ *
+ * @param ctx - the owning Cordis context.
+ * @param unit - the registered projection unit.
+ * @returns an idempotent reader.
+ */
+function createReportReader(ctx, unit) {
+  let cached;
+  let cachedAt = 0;
+  return async function read() {
+    const now = Date.now();
+    if (cached !== undefined && now - cachedAt < REPORT_CACHE_MS) return cached;
+    const value = await foldAccount(ctx, unit);
+    cached = value;
+    cachedAt = now;
+    return value;
+  };
+}
+
 /**
  * Mount the account read on Connection's exact Fetch-route registry.
  *
@@ -1401,7 +1487,7 @@ async function foldSession(ctx, unit, sessionId) {
  *
  * @param ctx - the owning Cordis context.
  * @param config - the effective plugin config.
- * @param unit - the registered projection unit, for the on-demand session fold.
+ * @param unit - the registered projection unit, for the on-demand session fold and the report.
  * @returns the live gate, for diagnostics.
  */
 function watchBalanceRoute(ctx, config, unit) {
@@ -1416,28 +1502,40 @@ function watchBalanceRoute(ctx, config, unit) {
       return;
     }
     const read = createBalanceReader(ctx, config);
-    try {
-      injected.effect(
-        () =>
-          register({
-            path: BALANCE_PATH,
-            methods: ["POST"],
-            requestBody: "buffered",
-            fetch: async (request) => {
-              const body = await request.json().catch(() => ({}));
-              if (body !== null && typeof body === "object" && typeof body.sessionId === "string") {
-                return Response.json(await foldSession(ctx, unit, body.sessionId));
-              }
-              return Response.json(await read());
-            },
-          }),
-        "dsh-cost-audit: balance route"
-      );
-    } catch (error) {
-      ctx.logger?.warn?.("dsh-cost-audit: balance route registration failed: %s", error instanceof Error ? error.message : String(error));
-      return;
-    }
-    gate.live = true;
+    const report = createReportReader(ctx, unit);
+    // One registration per effect, each announced separately: a route the
+    // registry rejects must not take the other one down with it, and the log has
+    // to name which one died. Learned the hard way — `requestBody` is a required
+    // field on a Fetch route ('buffered' | 'streaming'), and omitting it made the
+    // report route throw and vanish behind a message about the balance route.
+    const mount = (label, definition) => {
+      try {
+        injected.effect(() => register(definition), `dsh-cost-audit: ${label}`);
+        return true;
+      } catch (error) {
+        ctx.logger?.warn?.(`dsh-cost-audit: ${label} registration failed: %s`, error instanceof Error ? error.message : String(error));
+        return false;
+      }
+    };
+    const balanceLive = mount("balance route", {
+      path: BALANCE_PATH,
+      methods: ["POST"],
+      requestBody: "buffered",
+      fetch: async (request) => {
+        const body = await request.json().catch(() => ({}));
+        if (body !== null && typeof body === "object" && typeof body.sessionId === "string") {
+          return Response.json(await foldSession(ctx, unit, body.sessionId));
+        }
+        return Response.json(await read());
+      },
+    });
+    const reportLive = mount("account report route", {
+      path: REPORT_PATH,
+      methods: ["POST"],
+      requestBody: "buffered",
+      fetch: async () => Response.json(await report()),
+    });
+    gate.live = balanceLive && reportLive;
     return () => {
       gate.live = false;
     };

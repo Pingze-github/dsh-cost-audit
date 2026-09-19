@@ -40,6 +40,31 @@ window.__ModuleLoader__.load({
 		const NS = "dsh-cost-audit";
 		/** The host half's exact Fetch route on Connection's `/api` prefix. */
 		const BALANCE_PATH = "/api/dsh-cost-audit.balance";
+		/** Account-wide daily totals, merged host-side across every session. */
+		const REPORT_PATH = "/api/dsh-cost-audit.report";
+		/** The report's headline window, and the window it is compared against. */
+		const REPORT_DAYS = 7;
+		const REPORT_MIN_INTERVAL_MS = 60000;
+		/** Every field one day bucket carries; anything missing counts as zero. */
+		const REPORT_FIELDS = [
+			"costNano",
+			"cacheReadCostNano",
+			"uncachedCostNano",
+			"outputCostNano",
+			"compactionCostNano",
+			"peakCostNano",
+			"offPeakCostNano",
+			"uncachedInputTokens",
+			"cacheReadTokens",
+			"cacheWriteTokens",
+			"outputTokens",
+			"turns",
+			"steps",
+			"toolCalls",
+			"edits",
+			"requests",
+			"compactions"
+		];
 		const PROJECTION = "dshCostAudit";
 		const NANO = 1e9;
 
@@ -95,6 +120,27 @@ window.__ModuleLoader__.load({
 			"session.compaction": "其中压缩摘要",
 			"session.compactionValue": "{cost} · {count} 次压缩",
 			"session.compactionManual": "{cost} · {count} 次压缩（含手动 {manual}）",
+			"report.title": "全账号 · 最近 {days} 天",
+			"report.vs": "对比前 {days} 天",
+			"report.before": "前 {days} 天 {cost}",
+			"report.steady": "基本持平",
+			"report.rise": "↑ {percent}%",
+			"report.fall": "↓ {percent}%",
+			"report.perTurn": "每回合",
+			"report.perTurnHint": "你每发一条消息平均花多少钱 —— 分母由你决定，建议改不动它，所以看趋势最公平",
+			"report.perEdit": "每产出编辑",
+			"report.perEditHint": "每 write / edit / present 一次多少钱 —— 工作量口径；纯聊天、纯调研的日子没有产出，显示 —",
+			"report.perOutput": "每 1K 输出 token",
+			"report.perOutputHint": "产出 1000 token 要付多少 —— 输入是输出的很多倍时它就高，缓存和上下文都在这里体现",
+			"report.hit": "缓存命中率",
+			"report.hitHint": "命中的输入按 1/50 计价（0.02 对 1 元/M）—— 掉一个点，钱就上一个台阶",
+			"report.split": "重读 / 冷输入 / 输出",
+			"report.splitHint": "这三项加起来才是总花费；只看总数看不出「为什么动了」",
+			"report.compaction": "其中压缩摘要",
+			"report.compactionHint": "摘要调用本身花的钱 —— 它已经算在上面三项里了，所以是子集，不是第四项",
+			"report.peak": "高峰占比",
+			"report.peakHint": "高峰是工作日 9-12 点与 14-18 点，单价翻倍 —— 这里只报数字，不做建议",
+			"report.note": "金额按列表价计算。网页搜索与标题生成这两个调用的日志里没有用量，所以这是下界。报表能显示花费变了，但不能证明是你采纳的建议带来的。",
 			"advice.pill": "{count} 条建议",
 			"advice.title": "省 Token 建议",
 			"advice.high": "紧急",
@@ -212,6 +258,27 @@ window.__ModuleLoader__.load({
 			"session.compaction": "of which compaction",
 			"session.compactionValue": "{cost} · {count}×",
 			"session.compactionManual": "{cost} · {count}× ({manual} manual)",
+			"report.title": "Whole account · last {days} days",
+			"report.vs": "vs the previous {days} days",
+			"report.before": "{cost} the week before",
+			"report.steady": "about the same",
+			"report.rise": "up {percent}%",
+			"report.fall": "down {percent}%",
+			"report.perTurn": "Per turn",
+			"report.perTurnHint": "What one message of yours costs on average — the denominator is yours, no advice can move it, so the trend is the fair comparison",
+			"report.perEdit": "Per edit delivered",
+			"report.perEditHint": "What one write / edit / present costs — the work denominator; a day of pure chat or research has none and reads —",
+			"report.perOutput": "Per 1K output tokens",
+			"report.perOutputHint": "What 1000 tokens of output costs — it rises when the input is many times the output, which is where cache and context show up",
+			"report.hit": "Cache hit rate",
+			"report.hitHint": "A hit bills at 1/50 of a miss (0.02 vs 1 CNY per M) — one point off and the money steps up",
+			"report.split": "Re-read / cold input / output",
+			"report.splitHint": "These three are the total; the total alone cannot say why it moved",
+			"report.compaction": "of which compaction",
+			"report.compactionHint": "What the summarization calls cost — already inside the three above, so a subset rather than a fourth line",
+			"report.peak": "Peak-hour share",
+			"report.peakHint": "Peak is Mon-Fri 09-12 and 14-18, at double the price — a figure here, not advice",
+			"report.note": "Amounts use the configured list prices. The web-search and title-generation calls carry no usage in the log, so this is a lower bound. The report shows that spending moved; it cannot show that your own advice caused it.",
 			"advice.pill": "{count} tips",
 			"advice.title": "Token-saving tips",
 			"advice.high": "Urgent",
@@ -353,6 +420,13 @@ window.__ModuleLoader__.load({
 			".dshstats-verdict-improved .dshstats-verdictState{color:var(--dsw-alias-state-success-primary)}",
 			".dshstats-verdict-worse .dshstats-verdictState{color:var(--dsw-alias-state-error-primary)}",
 			".dshstats-verdictRan{color:var(--dsw-alias-label-secondary)}",
+			".dshstats-reportTotal{display:flex;gap:6px;align-items:baseline;font-weight:500}",
+			".dshstats-reportRow{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline}",
+			".dshstats-reportLabel{color:var(--dsw-alias-label-secondary)}",
+			".dshstats-reportValue{text-align:right;font-variant-numeric:tabular-nums}",
+			".dshstats-reportDelta{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}",
+			".dshstats-reportHint{grid-column:1/-1;color:var(--dsw-alias-label-caption);line-height:1.35}",
+			".dshstats-reportNote{margin:8px 0 0;color:var(--dsw-alias-label-caption);line-height:1.35}",
 			".dshstats-verdictDetail,.dshstats-verdictSample,.dshstats-verdictSpent,.dshstats-verdictRemaining{color:var(--dsw-alias-label-tertiary)}"
 		].join("");
 
@@ -1278,6 +1352,11 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		/** The `YYYY-MM-DD` key the host would have used for this instant, on this clock. */
+		function reportDayKey(date) {
+			return `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+		}
+
 		/**
 		 * This session's spend so far today, read from the fold's own daily
 		 * buckets by the browser's calendar day — the same clock the host keyed
@@ -1289,9 +1368,208 @@ window.__ModuleLoader__.load({
 		function todayCostNano(stats) {
 			if (stats.days === undefined) return 0;
 			// A day became a structured bucket (v7); its cost is one field of it.
-			const now = new Date();
-			const key = `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-			return stats.days[key]?.costNano ?? 0;
+			return stats.days[reportDayKey(new Date())]?.costNano ?? 0;
+		}
+
+		/**
+		 * Money at ratio scale.
+		 *
+		 * The pills round to two decimals because a ten-thousandth of a yuan is
+		 * not a figure anyone acts on. A *ratio* is the opposite case: cost per
+		 * turn is routinely under a cent, and "&lt;¥0.01" would hide the whole
+		 * signal the report exists to show. So the report keeps four decimals
+		 * below a cent and two above it.
+		 *
+		 * @param nano - amount in CNY × 1e9.
+		 * @returns the formatted amount, or an em dash when there is nothing to divide.
+		 */
+		function formatRatio(nano) {
+			if (nano === undefined || !Number.isFinite(nano) || nano === 0) return "—";
+			const yuan = nano / NANO;
+			return yuan < 0.01 ? `¥${yuan.toFixed(4)}` : `¥${yuan.toFixed(2)}`;
+		}
+
+		/** A ratio, or undefined when its denominator is empty — never a divide by zero. */
+		function ratioOf(numerator, denominator) {
+			return denominator > 0 ? numerator / denominator : undefined;
+		}
+
+		/**
+		 * The move between two readings, within the range where a ratio means
+		 * something.
+		 *
+		 * A week-over-week percentage is only as good as its baseline: with a
+		 * near-empty previous window the first render of this panel reported
+		 * "up 468363%", which is a fact about the baseline and not about
+		 * spending. Past ten-fold in either direction the comparison prints the
+		 * previous window's absolute instead, which stays true at any ratio.
+		 *
+		 * @param current - this window's reading.
+		 * @param previous - the previous window's reading.
+		 * @param t - locale seat.
+		 * @returns the delta text, or null when there is nothing to compare.
+		 */
+		function reportDelta(current, previous, t) {
+			if (current === undefined || previous === undefined || previous === 0) return null;
+			const move = (current - previous) / previous;
+			if (Math.abs(move) > 10) return t("report.before", { cost: formatRatio(previous), days: REPORT_DAYS });
+			if (Math.abs(move) < 0.01) return t("report.steady");
+			return t(move > 0 ? "report.rise" : "report.fall", { percent: Math.round(Math.abs(move) * 100) });
+		}
+
+		/**
+		 * Sum `length` calendar days ending `offset` days before today.
+		 * @param days - the merged calendar from the report route.
+		 * @param offset - how many days back the window ends.
+		 * @param length - how many days the window spans.
+		 * @returns the summed fields.
+		 */
+		function reportWindow(days, offset, length) {
+			const total = {};
+			for (const field of REPORT_FIELDS) total[field] = 0;
+			const cursor = new Date();
+			cursor.setHours(0, 0, 0, 0);
+			cursor.setDate(cursor.getDate() - offset);
+			for (let index = 0; index < length; index += 1) {
+				const day = days[reportDayKey(cursor)];
+				if (day !== undefined) {
+					for (const field of REPORT_FIELDS) total[field] += day[field] ?? 0;
+				}
+				cursor.setDate(cursor.getDate() - 1);
+			}
+			return total;
+		}
+
+		/**
+		 * The account-wide report as rows.
+		 *
+		 * Every row carries its own one-line explanation, because a denominator
+		 * nobody understands is worse than no number: the first question this
+		 * panel got was "which of these is actually the work".
+		 *
+		 * @param report - the report route's answer.
+		 * @param t - locale seat.
+		 * @returns the headline plus rows, or null when there is nothing to show.
+		 */
+		function reportRows(report, t) {
+			const days = report !== undefined && report.ok === true ? report.days : undefined;
+			if (days === undefined) return null;
+			const now = reportWindow(days, 0, REPORT_DAYS);
+			const before = reportWindow(days, REPORT_DAYS, REPORT_DAYS);
+			if (now.requests === 0 && before.requests === 0) return null;
+			const prompt = now.cacheReadTokens + now.uncachedInputTokens + now.cacheWriteTokens;
+			const pastPrompt = before.cacheReadTokens + before.uncachedInputTokens + before.cacheWriteTokens;
+			const perTurn = ratioOf(now.costNano, now.turns);
+			const perEdit = ratioOf(now.costNano, now.edits);
+			const perOutput = ratioOf(now.costNano, now.outputTokens / 1000);
+			const hit = ratioOf(now.cacheReadTokens, prompt);
+			return {
+				total: formatCny(now.costNano),
+				totalDelta: reportDelta(now.costNano, before.costNano, t),
+				items: [
+					{ key: "perTurn", label: t("report.perTurn"), value: formatRatio(perTurn), delta: reportDelta(perTurn, ratioOf(before.costNano, before.turns), t), hint: t("report.perTurnHint") },
+					{ key: "perEdit", label: t("report.perEdit"), value: formatRatio(perEdit), delta: reportDelta(perEdit, ratioOf(before.costNano, before.edits), t), hint: t("report.perEditHint") },
+					{
+						key: "perOutput",
+						label: t("report.perOutput"),
+						value: formatRatio(perOutput),
+						delta: reportDelta(perOutput, ratioOf(before.costNano, before.outputTokens / 1000), t),
+						hint: t("report.perOutputHint")
+					},
+					{
+						key: "hit",
+						label: t("report.hit"),
+						value: hit === undefined ? "—" : `${String(Math.round(hit * 1000) / 10)}%`,
+						delta: reportDelta(hit, ratioOf(before.cacheReadTokens, pastPrompt), t),
+						hint: t("report.hitHint")
+					},
+					{
+						key: "split",
+						label: t("report.split"),
+						value: `${formatCny(now.cacheReadCostNano)} / ${formatCny(now.uncachedCostNano)} / ${formatCny(now.outputCostNano)}`,
+						delta: null,
+						hint: t("report.splitHint")
+					},
+					{ key: "compaction", label: t("report.compaction"), value: formatCny(now.compactionCostNano), delta: null, hint: t("report.compactionHint") },
+					{
+						key: "peak",
+						label: t("report.peak"),
+						value: now.costNano === 0 ? "—" : `${String(Math.round((now.peakCostNano / now.costNano) * 1000) / 10)}%`,
+						delta: null,
+						hint: t("report.peakHint")
+					}
+				]
+			};
+		}
+
+		/** The report, as one panel section. Nothing renders while the route is silent. */
+		function reportSection(report, t) {
+			const rows = reportRows(report, t);
+			if (rows === null) return null;
+			const items = rows.items.map((item) =>
+				h(
+					"div",
+					{ key: item.key, className: "dshstats-reportRow" },
+					h("span", { className: "dshstats-reportLabel" }, item.label),
+					h("span", { className: "dshstats-reportValue" }, item.value),
+					item.delta === null ? null : h("span", { className: "dshstats-reportDelta" }, item.delta),
+					h("span", { className: "dshstats-reportHint" }, item.hint)
+				)
+			);
+			return {
+				title: t("report.title", { days: REPORT_DAYS }),
+				rows: [
+					h(
+						"div",
+						{ key: "report", className: "dshstats-report" },
+						h(
+							"div",
+							{ className: "dshstats-reportTotal" },
+							rows.total,
+							rows.totalDelta === null ? null : h("span", { className: "dshstats-reportDelta" }, rows.totalDelta)
+						),
+						...items,
+						h("p", { className: "dshstats-reportNote" }, t("report.note"))
+					)
+				]
+			};
+		}
+
+		/** One report read is reused for a minute; folding every session is not free. */
+		let reportCache = { at: 0, value: undefined };
+
+		/** Read the account-wide report, or a reason it is unavailable. Never rejects. */
+		async function readReport() {
+			const now = Date.now();
+			if (reportCache.value !== undefined && now - reportCache.at < REPORT_MIN_INTERVAL_MS) return reportCache.value;
+			try {
+				const response = await fetch(REPORT_PATH, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: "{}"
+				});
+				if (!response.ok) return { ok: false, reason: `http-${String(response.status)}` };
+				const parsed = await response.json();
+				reportCache = { at: now, value: parsed };
+				return parsed;
+			} catch {
+				return { ok: false, reason: "transport" };
+			}
+		}
+
+		/** The account-wide report for the panel, fetched once per minute at most. */
+		function useReport() {
+			const [report, setReport] = react.useState(undefined);
+			react.useEffect(() => {
+				let live = true;
+				readReport().then((result) => {
+					if (live) setReport(result);
+				});
+				return () => {
+					live = false;
+				};
+			}, []);
+			return report;
 		}
 
 		/** The live account read, lifted so both pills (and the panel) share one fetch. */
@@ -1313,6 +1591,7 @@ window.__ModuleLoader__.load({
 		function SessionCostPill(props) {
 			const { t, stats, balance } = props;
 			const seat = useStatDialog();
+			const report = useReport();
 			react.useEffect(() => {
 				if (!seat.open) return undefined;
 				return balance.refresh();
@@ -1363,6 +1642,10 @@ window.__ModuleLoader__.load({
 						]
 					: [h(Detail, { key: "state", label: t("session.balance"), children: balanceLabel })]
 			});
+			// Account-wide, not this session's — labelled as such, and last, because
+			// it answers a different question than everything above it.
+			const account = reportSection(report, t);
+			if (account !== null) sections.push(account);
 			return h(
 				"span",
 				{ className: "dshstats-anchor" },

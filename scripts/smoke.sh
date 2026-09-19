@@ -65,12 +65,15 @@ done
 
 # The whole sweep is one python process: a curl per session, every assertion in
 # the same place, and a single non-zero exit if any of them fails.
-DSH_STATS_BASE="$BASE" DSH_STATS_JAR="$JAR" python3 - "${SESSIONS[@]}" <<'PY'
+DSH_STATS_BASE="$BASE" DSH_STATS_JAR="$JAR" PLUGIN_ID="$PLUGIN_ID" python3 - "${SESSIONS[@]}" <<'PY'
 import json, os, subprocess, sys
 
 base = os.environ["DSH_STATS_BASE"]
 jar = os.environ["DSH_STATS_JAR"]
+plugin = os.environ["PLUGIN_ID"]
 sessions = sys.argv[1:]
+balance_url = f"{base}/api/{plugin}.balance"
+report_url = f"{base}/api/{plugin}.report"
 
 CODES = {
     "context-reread", "fragmented-tools", "repeated-target", "compaction-churn",
@@ -79,6 +82,7 @@ CODES = {
 SEVERITIES = {"high", "warn", "info"}
 failures = []
 folded = 0
+biggest = 0
 
 def check(condition, session, message):
     if not condition:
@@ -88,7 +92,7 @@ for session in sessions:
     raw = subprocess.run(
         ["curl", "-s", "-b", jar, "-X", "POST",
          "-H", "content-type: application/json", "-H", "Origin: http://127.0.0.1:3080",
-         "-d", json.dumps({"sessionId": session}), f"{base}/api/dsh-cost-audit.balance"],
+         "-d", json.dumps({"sessionId": session}), balance_url],
         capture_output=True, text=True,
     ).stdout
     try:
@@ -116,6 +120,7 @@ for session in sessions:
     # to the same total — otherwise the report's "why did it move" is
     # arithmetic that does not close.
     day_total = 0
+    biggest = max(biggest, total)
     for day_key, day in stats["days"].items():
         token_axis = day["cacheReadCostNano"] + day["uncachedCostNano"] + day["outputCostNano"]
         tariff_axis = day["peakCostNano"] + day["offPeakCostNano"]
@@ -141,7 +146,35 @@ for session in sessions:
         check(values["automatic"] == automatic, session, f"tip says {values['automatic']} automatic, fold says {automatic}")
         check(values["manual"] == manual, session, f"tip says {values['manual']} manual, fold says {manual}")
 
+# The account-wide report has to be the merge of what we just folded. It is the
+# figure that answers "am I spending less than I used to", so both splits have to
+# close on it exactly as they do per session.
+raw = subprocess.run(
+    ["curl", "-s", "-b", jar, "-X", "POST",
+     "-H", "content-type: application/json", "-H", "Origin: http://127.0.0.1:3080",
+     "-d", "{}", report_url],
+    capture_output=True, text=True,
+).stdout
+try:
+    report = json.loads(raw)
+except json.JSONDecodeError:
+    report = {}
+check(report.get("ok") is True, "account", "the report route did not answer ok")
+report_days = report.get("days", {})
+check(len(report_days) > 0, "account", "the report carries no days")
+report_total = 0
+for key, day in sorted(report_days.items()):
+    token_axis = day["cacheReadCostNano"] + day["uncachedCostNano"] + day["outputCostNano"]
+    tariff_axis = day["peakCostNano"] + day["offPeakCostNano"]
+    check(token_axis == day["costNano"], "account", f"{key}: report token split {token_axis} != {day['costNano']}")
+    check(tariff_axis == day["costNano"], "account", f"{key}: report tariff split {tariff_axis} != {day['costNano']}")
+    report_total += day["costNano"]
+check(report.get("sessions", 0) >= 1, "account", "the report folded no sessions")
+check(report_total >= biggest, "account", f"the report ({report_total}) is less than the largest session ({biggest})")
+check(len(report_days) <= 90, "account", "the report keeps more than 90 days")
+
 print(f"smoke: folded {folded} of {len(sessions)} session(s)")
+print(f"smoke: report merged {report.get('sessions')} session(s), {len(report_days)} day(s), {report_total / 1e9:.2f} CNY")
 if failures:
     for line in failures:
         print(f"smoke: FAIL {line}", file=sys.stderr)

@@ -91,11 +91,21 @@ assert.equal(typeof unit.wire?.view, "function", "unit publishes a client view")
 // Fetch registry, which has no such dependency.
 const channelInject = injects.find((deps) => deps.includes("connection"));
 assert.ok(channelInject !== undefined, "the balance endpoint is armed through an injection");
-assert.equal(routes.length, 1, "exactly one balance route registered");
-const balanceRoute = routes[0];
-assert.equal(balanceRoute.path, "/api/dsh-cost-audit.balance", "the route sits on Connection's /api prefix");
-assert.deepEqual(balanceRoute.methods, ["POST"], "the route answers POST");
-assert.equal(typeof balanceRoute.fetch, "function", "the route is servable");
+const balanceRoute = routes.find((route) => route.path.endsWith(".balance"));
+const reportRoute = routes.find((route) => route.path.endsWith(".report"));
+assert.equal(routes.length, 2, "exactly two routes registered");
+assert.ok(balanceRoute !== undefined, "the balance route is registered");
+assert.ok(reportRoute !== undefined, "the report route is registered");
+assert.equal(balanceRoute.path, "/api/dsh-cost-audit.balance", "the balance route sits on Connection's /api prefix");
+assert.equal(reportRoute.path, "/api/dsh-cost-audit.report", "the report route sits on Connection's /api prefix");
+assert.deepEqual(balanceRoute.methods, ["POST"], "the balance route answers POST");
+assert.deepEqual(reportRoute.methods, ["POST"], "the report route answers POST");
+// The registry requires a body mode; omitting it made the route throw at mount
+// and disappear behind the other route's error message.
+assert.equal(balanceRoute.requestBody, "buffered", "the balance route declares a body mode");
+assert.equal(reportRoute.requestBody, "buffered", "the report route declares a body mode");
+assert.equal(typeof balanceRoute.fetch, "function", "the balance route is servable");
+assert.equal(typeof reportRoute.fetch, "function", "the report route is servable");
 
 //#region live account read
 
@@ -143,8 +153,11 @@ assert.equal(typeof balanceRoute.fetch, "function", "the route is servable");
 		const before = routes.length;
 		const fresh = await import(`../index.js?probe=${Date.now()}`);
 		fresh.apply(ctx, { balanceCacheMs: 0 });
-		assert.equal(routes.length, before + 1, "the re-imported plugin registers its own route");
-		const value = await (await routes.at(-1).fetch(new Request("http://dsh.internal/api/dsh-cost-audit.balance"))).json();
+		const freshRoutes = routes.slice(before);
+		assert.equal(freshRoutes.length, 2, "the re-imported plugin registers its own routes");
+		const freshBalance = freshRoutes.find((route) => route.path.endsWith(".balance"));
+		assert.ok(freshBalance !== undefined, "the re-imported plugin registers its own balance route");
+		const value = await (await freshBalance.fetch(new Request("http://dsh.internal/api/dsh-cost-audit.balance"))).json();
 		assert.equal(value.ok, false, "no credential is a reported failure");
 		assert.equal(value.reason, "no-api-key", "the failure names the missing credential");
 		assert.equal(fetched, false, "no upstream call is attempted without a key");
@@ -244,6 +257,42 @@ assert.equal(new Date(WEEKEND).getUTCDay(), 6, "WEEKEND must be a Saturday");
 	const missing = await (await call({ sessionId: "nope" })).json();
 	assert.deepEqual(missing, { ok: false, reason: "not-found" }, "an unknown session is a reported failure");
 	delete services.sessionQuery;
+}
+
+//#endregion
+
+//#region account report
+
+{
+	// The report sums the same day buckets across sessions — the only figure that
+	// can answer "am I spending less than I used to", since one session is one
+	// piece of work and they are not comparable.
+	const usage = { inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+	const time = PEAK;
+	const log = (seq) => [
+		{ type: "request/context", seq, time, data: { provider: "deepseek-official", model: "deepseek-flash" } },
+		{ type: "assistant/message", seq: seq + 1, time, data: { turn: 1, step: 1, usage } }
+	];
+	services.sessionQuery = {
+		async listSessions() {
+			return [{ header: { id: "session-a" } }, { header: { id: "session-b" } }, { header: { id: "session-gone" } }];
+		},
+		async observeSession(sessionId) {
+			if (sessionId === "session-gone") throw new Error("not found");
+			return { header: { id: sessionId }, inheritedEventCount: 0, events: log(sessionId === "session-a" ? 1 : 10) };
+		}
+	};
+	const response = await reportRoute.fetch(new Request("http://dsh.internal/api/dsh-cost-audit.report", { method: "POST" }));
+	const report = await response.json();
+	delete services.sessionQuery;
+	assert.equal(report.ok, true, "the report is served");
+	assert.equal(report.sessions, 2, "both readable sessions are folded");
+	assert.equal(report.scanned, 3, "the unreadable one is counted as scanned, not folded");
+	const day = report.days[dayKey(time)];
+	assert.equal(day.costNano, 4000000, "the day sums both sessions");
+	assert.equal(day.requests, 2, "both settlements are counted");
+	assert.equal(day.cacheReadCostNano + day.uncachedCostNano + day.outputCostNano, day.costNano, "the merged day still closes on its token axis");
+	assert.equal(day.peakCostNano + day.offPeakCostNano, day.costNano, "the merged day still closes on its tariff axis");
 }
 
 //#endregion
@@ -867,4 +916,4 @@ function toolCalls(count, name, args, ms, time) {
 
 //#endregion
 
-process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} balance routes)\n`);
+process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} connection routes)\n`);
