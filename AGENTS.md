@@ -1,0 +1,93 @@
+# dsh-stats — project facts
+
+Project-specific facts only. Global rules live in `~/.dsh/AGENTS.md`.
+
+## What this is
+
+A DeepSeek Harness plugin, **not** a standalone app. Two halves:
+
+- `index.js` — host half. A plain Cordis plugin: registers the `dshStats` session
+  projection and one exact Connection Fetch route.
+- `client.js` — browser half. Hand-written CJS bundle in the
+  `window.__ModuleLoader__.load({ id, factory })` form; **no build step, no
+  TypeScript, no bundler**. Keep it that way: `prepare` scripts are blocked by
+  pnpm for git-hosted deps, and a `link:` install needs the files to be final.
+
+No runtime dependency on any third-party plugin.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `bash scripts/check.sh` | **The single success criterion.** Parses both halves, runs the host-half behaviour suite, checks bundle wiring. |
+| `bash scripts/link-deps.sh` | Points the checkout's `node_modules` at the running harness (`zod`, `@deepseek-ai/dsh-llm`, `-credentials`, `-session-projection`, `cordis`). `check.sh` runs it on demand. |
+| `node scripts/gui-probe.mjs --url <authenticated-url> [--session <id>] [--out shot.png] [--wait <sel>] [--click <sel>]` | Renders the live GUI in headless Chromium and reports what reached the DOM (`--report` takes a JS expression). |
+
+Install into a profile:
+
+```bash
+dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
+```
+
+## Harness facts that cost real time to rediscover
+
+- **`connection.rpc.handle(channel, handler)` is unusable from a plugin.** It
+  registers the channel through the *reading* context, and the registry resolves
+  `webServer` from the Context that registered Connection — where it is not
+  injected — so every registration dies with
+  `cannot get property "webServer" without inject`. `dsh-context`'s
+  `/dsh-context` channel is dead in this deployment for the same reason. Use
+  `connection.fetch.register({ path, methods, requestBody, fetch })` instead: it
+  has no such dependency and is scoped to the calling fiber. The path must sit
+  under `/api/`, e.g. `/api/dsh-stats.balance`.
+- **Read services as *properties*, not `ctx.get()`.** Cordis's tracker only
+  rebinds a service to the reading fiber (and only that rebinding makes
+  `connection.fetch` / `.rpc` scope correctly) on a **property** read. Use
+  `injected.connection`; `injected.get("connection")` returns the untracked
+  instance.
+- **A newly registered projection unit has no value for sessions whose persisted
+  projection checkpoint predates it.** The session list carries projections from
+  `cachedSnapshot` (already-materialized cells only), so a unit missing from the
+  checkpoint is simply absent until that session takes another event. That is
+  why the `/api/dsh-stats.balance` route also folds a session's log on demand —
+  do not remove it as redundancy.
+- **A projection's `wire.view` must reuse its reference.** The live drive
+  publishes on a changed `view` result compared with `Object.is`; rebuilding the
+  object every call publishes on every event. Hence `statsView()` (pure, used by
+  the on-demand fold) plus a one-slot memo in `wire.view`.
+- **`Context.prototype` reads are strict.** `ctx.foo` throws
+  `cannot get property "foo" without inject` unless the reading context injected
+  `foo`; `ctx.get("foo")` never throws. That asymmetry is the fastest way to tell
+  why an injection callback silently did nothing.
+- `dsh plugin add` only writes the profile manifest; a bundle becomes a profile
+  layer at boot **unless** `dsh-hotswap` is mounted, which watches
+  `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or
+  a restart is needed (and restarting `dsh web` kills the session hosting it).
+
+## Verified against
+
+`@deepseek-ai/dsh` **0.1.5-rc.1 / 0.1.5-rc.2**, profile `web`, provider
+`deepseek-official`, model `deepseek-flash`.
+
+## GUI probe
+
+The bundled Debian Chromium (120) predates the `Iterator` global that
+`dsh-client-ui-sidebar-documentpreview` touches at module scope, so the probe
+installs a one-line polyfill before page scripts. Without it the app boots to
+"Failed to load plugins: Iterator is not defined".
+
+The GUI needs an authenticated URL: `grep -o 'http://127.0.0.1:3080/?token=[^ ]*' /var/log/dsh-web.log | tail -1`.
+`--session <id>` seeds `localStorage["dsh.sessions.current"]` so the probe opens a
+deterministic session. Use a **normal** session: subagent sessions refuse to load
+standalone ("subagent Sessions require their durable parent address"), which
+shows up as `turnPills: []` and is not a plugin fault.
+
+Plugins are hot-restarted (host code reload) with:
+
+```bash
+curl -s -X POST -H 'content-type: application/json' -H 'Origin: http://127.0.0.1:3080' \
+  -b <cookie-jar> -d '{"id":"dsh-stats"}' http://127.0.0.1:3080/_dsh/hotswap/restart
+```
+
+`GET /_dsh/hotswap/state` lists every loader entry with its phase — the quickest
+way to confirm a plugin is `active`.

@@ -1,0 +1,15 @@
+# dsh-stats bundle patch: mounts the plugin into a profile's layer stack.
+# The row loads the package main entry as the host half (a plain Cordis
+# plugin); the `dsh.client` declaration in package.json makes the web app load
+# its ./client bundle as the browser half.
+#
+# Every config field is optional; the defaults are the shipped ones.
+# Override per profile with the same id, e.g.:
+#
+#   - id: dsh-stats
+#     config:
+#       baseUrl: "https://api.deepseek.com"
+#       currency: CNY
+- insert:
+    - id: dsh-stats
+      name: dsh-stats
