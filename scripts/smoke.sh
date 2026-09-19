@@ -112,6 +112,19 @@ for session in sessions:
     check(manual_cost >= 0 and automatic_cost >= 0, session, "negative cost split")
     check(compaction["summaryCostNano"] <= total, session, "summary cost exceeds session cost")
 
+    # Every day is a bucket with two independent splits, and each has to add up
+    # to the same total — otherwise the report's "why did it move" is
+    # arithmetic that does not close.
+    day_total = 0
+    for day_key, day in stats["days"].items():
+        token_axis = day["cacheReadCostNano"] + day["uncachedCostNano"] + day["outputCostNano"]
+        tariff_axis = day["peakCostNano"] + day["offPeakCostNano"]
+        check(token_axis == day["costNano"], session, f"{day_key}: token split {token_axis} != day total {day['costNano']}")
+        check(tariff_axis == day["costNano"], session, f"{day_key}: tariff split {tariff_axis} != day total {day['costNano']}")
+        check(day["compactionCostNano"] <= day["costNano"], session, f"{day_key}: compaction cost exceeds the day total")
+        day_total += day["costNano"]
+    check(day_total <= total, session, f"the kept days ({day_total}) sum to more than the session ({total})")
+
     codes = [item["code"] for item in stats["advice"]]
     for item in stats["advice"]:
         check(item["code"] in CODES, session, f"unknown advice code {item['code']}")

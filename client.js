@@ -1288,9 +1288,10 @@ window.__ModuleLoader__.load({
 		 */
 		function todayCostNano(stats) {
 			if (stats.days === undefined) return 0;
+			// A day became a structured bucket (v7); its cost is one field of it.
 			const now = new Date();
 			const key = `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-			return stats.days[key] ?? 0;
+			return stats.days[key]?.costNano ?? 0;
 		}
 
 		/** The live account read, lifted so both pills (and the panel) share one fetch. */

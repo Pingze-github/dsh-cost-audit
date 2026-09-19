@@ -434,7 +434,7 @@ function outputTokensOf(usage) {
 }
 
 /** How many calendar days of spend the fold keeps. */
-const DAYS_KEPT = 31;
+const DAYS_KEPT = 90;
 
 /**
  * The local calendar day of one event, as `YYYY-MM-DD`.
@@ -458,6 +458,67 @@ function recentDays(days) {
   const kept = {};
   for (const key of keys.sort().slice(-DAYS_KEPT)) kept[key] = days[key];
   return kept;
+}
+
+/**
+ * What one calendar day of billing looked like.
+ *
+ * Three independent splits, and the report never mixes them up:
+ *
+ *   - the token axis (`cacheRead` + `uncached` + `output`) sums to `costNano`;
+ *   - the tariff axis (`peak` + `offPeak`) also sums to `costNano`;
+ *   - `compactionCostNano` is a *subset* of the token axis, not a fourth
+ *     sibling — a summarize call's tokens are still cache-read or uncached
+ *     tokens, so counting it alongside them would bill the same yuan twice.
+ *
+ * Splitting is what makes a fall in the total legible: "the re-read halved and
+ * the output did not move" is a conclusion, "this week was cheaper" is not.
+ *
+ * `turns` and `edits` are the denominators the account-wide report divides by.
+ * Turns are the human's — no advice of ours can move how often someone types —
+ * and edits are the work that came out the other end.
+ */
+const dayShape = {
+  costNano: z.number().int().nonnegative(),
+  cacheReadCostNano: z.number().int().nonnegative(),
+  uncachedCostNano: z.number().int().nonnegative(),
+  outputCostNano: z.number().int().nonnegative(),
+  compactionCostNano: z.number().int().nonnegative(),
+  peakCostNano: z.number().int().nonnegative(),
+  offPeakCostNano: z.number().int().nonnegative(),
+  uncachedInputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  turns: z.number().int().nonnegative(),
+  steps: z.number().int().nonnegative(),
+  toolCalls: z.number().int().nonnegative(),
+  edits: z.number().int().nonnegative(),
+  requests: z.number().int().nonnegative(),
+  compactions: z.number().int().nonnegative(),
+};
+const daySchema = z.object(dayShape).strict();
+const DAY_FIELDS = Object.keys(dayShape);
+const ZERO_DAY = Object.freeze(Object.fromEntries(DAY_FIELDS.map((field) => [field, 0])));
+
+/**
+ * Fold a partial delta into one calendar day, clamping every field at zero.
+ *
+ * A retried settlement replaces an earlier one and can therefore carry a
+ * negative delta, and a replacement can land after midnight. Clamping keeps
+ * that from leaving a negative day behind — the same guard the flat map had.
+ *
+ * @param days - the calendar map.
+ * @param time - the event's instant.
+ * @param delta - the fields to add.
+ * @returns the next calendar map.
+ */
+function addDay(days, time, delta) {
+  const key = dayOf(time);
+  const previous = days[key] ?? ZERO_DAY;
+  const next = {};
+  for (const field of DAY_FIELDS) next[field] = Math.max(0, previous[field] + (delta[field] ?? 0));
+  return { ...days, [key]: next };
 }
 
 /** Prompt-side total of one billed bucket. */
@@ -538,7 +599,7 @@ const stateSchema = z
       .strict()
       .nullable(),
     /** Local calendar day → that day's billed spend, in CNY × 1e9. */
-    days: z.record(z.string(), z.number().int().nonnegative()),
+    days: z.record(z.string(), daySchema),
     /** What the log says about compaction, and what it cost. */
     compaction: compactionSchema,
     /**
@@ -577,6 +638,24 @@ function countOf(value) {
  * @param pricing - the effective price table.
  * @returns the billed bucket, or null when the report carries no counts at all.
  */
+function subjectCosts(tokens, family, peak, pricing) {
+  if (family === null) return { cacheReadCostNano: 0, uncachedCostNano: 0, outputCostNano: 0 };
+  const rate = pricing[family][peak ? "peak" : "off"];
+  return {
+    cacheReadCostNano: Math.round(tokens.cacheRead * rate.cacheHit * THOUSAND),
+    uncachedCostNano: Math.round((tokens.uncached + tokens.cacheWrite) * rate.cacheMiss * THOUSAND),
+    outputCostNano: Math.round(tokens.output * rate.output * THOUSAND),
+  };
+}
+
+/**
+ * Price one provider usage report under a model family and billing period.
+ * @param usage - the provider usage record.
+ * @param family - DeepSeek price family, or null when the route is unpriced.
+ * @param peak - whether the settlement's instant bills at the peak rate.
+ * @param pricing - the effective price table.
+ * @returns the billed bucket, or null when the report carries no counts at all.
+ */
 function priceUsage(usage, family, peak, pricing) {
   const uncached = countOf(usage.inputTokens);
   const cacheRead = countOf(usage.cacheReadTokens);
@@ -591,17 +670,15 @@ function priceUsage(usage, family, peak, pricing) {
   if (family === null) {
     return { ...ZERO_BUCKET, uncachedInputTokens: u, cacheReadTokens: c, cacheWriteTokens: w, outputTokens: o, unpricedTokens: billed };
   }
-  const rate = pricing[family][peak ? "peak" : "off"];
-  const cacheReadCostNano = Math.round(c * rate.cacheHit * THOUSAND);
-  const costNano =
-    cacheReadCostNano + Math.round((u + w) * rate.cacheMiss * THOUSAND) + Math.round(o * rate.output * THOUSAND);
+  const parts = subjectCosts({ uncached: u, cacheRead: c, cacheWrite: w, output: o }, family, peak, pricing);
+  const costNano = parts.cacheReadCostNano + parts.uncachedCostNano + parts.outputCostNano;
   return {
     uncachedInputTokens: u,
     cacheReadTokens: c,
     cacheWriteTokens: w,
     outputTokens: o,
     costNano,
-    cacheReadCostNano,
+    cacheReadCostNano: parts.cacheReadCostNano,
     pricedTokens: billed,
     unpricedTokens: 0,
   };
@@ -703,7 +780,16 @@ function foldSettlement(state, event, pricing) {
   const turnKey = String(turn);
   const turns = { ...state.turns, [turnKey]: addBuckets(state.turns[turnKey] ?? ZERO_BUCKET, delta) };
   const turnModels = state.turnModels[turnKey] === state.model ? state.turnModels : { ...state.turnModels, [turnKey]: state.model };
-  const day = dayOf(event.time);
+  const peak = isPeak(event.time);
+  const parts = subjectCosts(
+    { uncached: delta.uncachedInputTokens, cacheRead: delta.cacheReadTokens, cacheWrite: delta.cacheWriteTokens, output: delta.outputTokens },
+    familyOf(state.model),
+    peak,
+    pricing
+  );
+  // The day's total is derived from its own split rather than copied from the
+  // bucket, so the two can never disagree about the same yuan.
+  const dayCost = parts.cacheReadCostNano + parts.uncachedCostNano + parts.outputCostNano;
   return {
     ...state,
     total: addBuckets(state.total, delta),
@@ -711,9 +797,17 @@ function foldSettlement(state, event, pricing) {
     turnModels,
     slots: { ...state.slots, [key]: bucket },
     lastSlot: key,
-    // A replacement can settle across midnight, so clamp at zero rather than
-    // carry a negative day.
-    days: { ...state.days, [day]: Math.max(0, (state.days[day] ?? 0) + delta.costNano) },
+    days: addDay(state.days, event.time, {
+      costNano: dayCost,
+      ...parts,
+      peakCostNano: peak ? dayCost : 0,
+      offPeakCostNano: peak ? 0 : dayCost,
+      uncachedInputTokens: delta.uncachedInputTokens,
+      cacheReadTokens: delta.cacheReadTokens,
+      cacheWriteTokens: delta.cacheWriteTokens,
+      outputTokens: delta.outputTokens,
+      requests: 1,
+    }),
   };
 }
 
@@ -821,7 +915,14 @@ function foldCompactionSummary(state, event, pricing) {
       compaction.summaryCostNano += bucket.costNano;
       compaction.summaryTokens += bucket.pricedTokens + bucket.unpricedTokens;
       if (manual) compaction.manualCostNano += bucket.costNano;
-      const day = dayOf(event.time);
+      const peak = isPeak(event.time);
+      const parts = subjectCosts(
+        { uncached: bucket.uncachedInputTokens, cacheRead: bucket.cacheReadTokens, cacheWrite: bucket.cacheWriteTokens, output: bucket.outputTokens },
+        familyOf(model),
+        peak,
+        pricing
+      );
+      const dayCost = parts.cacheReadCostNano + parts.uncachedCostNano + parts.outputCostNano;
       return {
         ...base,
         total: {
@@ -829,7 +930,19 @@ function foldCompactionSummary(state, event, pricing) {
           costNano: state.total.costNano + bucket.costNano,
           cacheReadCostNano: state.total.cacheReadCostNano + bucket.cacheReadCostNano,
         },
-        days: { ...state.days, [day]: (state.days[day] ?? 0) + bucket.costNano },
+        days: addDay(base.days, event.time, {
+          costNano: dayCost,
+          ...parts,
+          // A subset of the token axis, not a fourth part of it.
+          compactionCostNano: dayCost,
+          peakCostNano: peak ? dayCost : 0,
+          offPeakCostNano: peak ? 0 : dayCost,
+          uncachedInputTokens: bucket.uncachedInputTokens,
+          cacheReadTokens: bucket.cacheReadTokens,
+          cacheWriteTokens: bucket.cacheWriteTokens,
+          outputTokens: bucket.outputTokens,
+          compactions: 1,
+        }),
       };
     }
   }
@@ -1014,7 +1127,7 @@ function createStatsProjection(pricing) {
   let viewValue;
   return {
     key: PROJECTION_KEY,
-    stateVersion: 6,
+    stateVersion: 7,
     stateSchema,
     init: () => ({
       provider: "",
@@ -1056,7 +1169,9 @@ function createStatsProjection(pricing) {
           signals: { ...state.signals, retries: state.signals.retries + 1, consecutiveFailures: 0, lastFailedTool: "" },
         };
       } else if (type === "turn/start") {
-        if (state.turnStart !== event.time || state.openStep !== null) next = { ...next, turnStart: event.time, openStep: null };
+        if (state.turnStart !== event.time || state.openStep !== null) {
+          next = { ...next, turnStart: event.time, openStep: null, days: addDay(next.days, event.time, { turns: 1 }) };
+        }
       } else if (type === "step/start") {
         const { turn, step } = event.data;
         if (Number.isInteger(turn) && Number.isInteger(step)) {
@@ -1090,6 +1205,7 @@ function createStatsProjection(pricing) {
               productiveCalls: state.signals.productiveCalls + (productive ? 1 : 0),
               productiveThisStep: state.signals.productiveThisStep || productive,
             },
+            days: addDay(next.days, event.time, { toolCalls: 1, edits: productive ? 1 : 0 }),
           };
         }
       } else if (type === "tool/result") {
@@ -1098,7 +1214,7 @@ function createStatsProjection(pricing) {
         const signals = state.signals.productiveThisStep
           ? { ...state.signals, productiveThisStep: false, stepsSinceProductive: 0, steps: state.signals.steps + 1 }
           : { ...state.signals, stepsSinceProductive: state.signals.stepsSinceProductive + 1, steps: state.signals.steps + 1 };
-        next = { ...next, openStep: null, signals };
+        next = { ...next, openStep: null, signals, days: addDay(next.days, event.time, { steps: 1 }) };
       } else if (type === "compaction/summary") {
         next = foldCompactionSummary(next, event, pricing);
       } else if (type === "command/run") {
@@ -1134,7 +1250,7 @@ function createStatsProjection(pricing) {
           total: z.object(bucketShape).strict(),
           turns: z.record(z.string(), z.object({ ...bucketShape, model: z.string() }).strict()),
           timing: timingViewSchema,
-          days: z.record(z.string(), z.number().int().nonnegative()),
+          days: z.record(z.string(), daySchema),
           compaction: compactionSchema,
           metrics: metricsSchema,
           advice: z.array(

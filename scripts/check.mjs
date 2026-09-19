@@ -569,8 +569,8 @@ function dayKey(time) {
 	const t2 = bjt(2026, 9, 22, 10);
 	const { view } = fold([route("deepseek-flash"), settle(1, 1, usage, t1), settle(1, 2, usage, t2), settle(1, 3, usage, t2)]);
 	assert.equal(Object.keys(view.days).length, 2, "spend is bucketed by local day");
-	assert.equal(view.days[dayKey(t1)], 2000000, "the first day holds its own settlement");
-	assert.equal(view.days[dayKey(t2)], 4000000, "the second day holds both of its own");
+	assert.equal(view.days[dayKey(t1)].costNano, 2000000, "the first day holds its own settlement");
+	assert.equal(view.days[dayKey(t2)].costNano, 4000000, "the second day holds both of its own");
 	assert.equal(view.total.costNano, 6000000, "the days add up to the session total");
 }
 
@@ -580,7 +580,7 @@ function dayKey(time) {
 	const second = { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
 	const time = bjt(2026, 9, 21, 10);
 	const { view } = fold([route("deepseek-flash"), settle(1, 1, first, time), settle(1, 1, second, time + 1000)]);
-	assert.equal(view.days[dayKey(time)], 200000, "a replacement corrects its own day");
+	assert.equal(view.days[dayKey(time)].costNano, 200000, "a replacement corrects its own day");
 }
 
 {
@@ -606,18 +606,54 @@ function dayKey(time) {
 			}
 		}
 	]);
-	assert.equal(view.days[dayKey(time)], 2000000, "a summarize call counts toward its day");
+	assert.equal(view.days[dayKey(time)].costNano, 2000000, "a summarize call counts toward its day");
 }
 
 {
-	// The wire keeps the newest 31 days only.
+	// The wire keeps the newest 90 days only — enough for a quarterly view.
 	const usage = { inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
 	const events = [route("deepseek-flash")];
-	for (let index = 0; index < 40; index += 1) events.push(settle(1, index + 1, usage, bjt(2026, 7, 1, 10) + index * 86400000));
+	for (let index = 0; index < 100; index += 1) events.push(settle(1, index + 1, usage, bjt(2026, 7, 1, 10) + index * 86400000));
 	const { view } = fold(events);
-	assert.equal(Object.keys(view.days).length, 31, "daily history is bounded");
+	assert.equal(Object.keys(view.days).length, 90, "daily history is bounded");
 	assert.ok(!Object.hasOwn(view.days, dayKey(bjt(2026, 7, 1, 10))), "the oldest day is dropped");
-	assert.ok(Object.hasOwn(view.days, dayKey(bjt(2026, 7, 1, 10) + 39 * 86400000)), "the newest day is kept");
+	assert.ok(Object.hasOwn(view.days, dayKey(bjt(2026, 7, 1, 10) + 99 * 86400000)), "the newest day is kept");
+}
+
+{
+	// A day is a bucket now, and both of its splits have to add up to the same
+	// total, or the report's "why did it move" is arithmetic that does not close.
+	const usage = { inputTokens: 1000, cacheReadTokens: 100000, cacheWriteTokens: 0, outputTokens: 500 };
+	const peakTime = bjt(2026, 9, 21, 10); // Monday 10:00 — inside the peak window
+	const offTime = bjt(2026, 9, 22, 13); // Tuesday 13:00 — between the two windows, and its own day
+	const { view } = fold([route("deepseek-flash"), settle(1, 1, usage, peakTime), settle(2, 1, usage, offTime)]);
+	const peakDay = view.days[dayKey(peakTime)];
+	const offDay = view.days[dayKey(offTime)];
+	for (const [name, day] of [["peak", peakDay], ["off-peak", offDay]]) {
+		assert.equal(day.cacheReadCostNano + day.uncachedCostNano + day.outputCostNano, day.costNano, `${name}: the token axis sums to the day`);
+		assert.equal(day.peakCostNano + day.offPeakCostNano, day.costNano, `${name}: the tariff axis sums to the day`);
+		assert.equal(day.requests, 1, `${name}: one settlement is counted`);
+	}
+	assert.equal(peakDay.peakCostNano, peakDay.costNano, "a peak settlement lands on the peak side");
+	assert.equal(offDay.offPeakCostNano, offDay.costNano, "an off-peak settlement lands on the off side");
+	assert.equal(peakDay.costNano, offDay.costNano * 2, "the same tokens bill at double inside the peak window");
+	assert.equal(offDay.cacheReadTokens, 100000, "a day keeps its own token counts");
+}
+
+{
+	// The counters the report divides by: turns are the human's, edits are output.
+	const time = bjt(2026, 9, 21, 10);
+	const events = [
+		route("deepseek-flash"),
+		{ type: "turn/start", seq: 1, time, data: { turn: 1 } },
+		settle(1, 1, { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 }, time),
+		...toolCalls(1, "write", JSON.stringify({ file_path: "/tmp/a.js", content: "x" }), 100, time + 10),
+		...toolCalls(1, "bash", JSON.stringify({ command: "echo hi" }), 100, time + 20)
+	];
+	const day = fold(events).view.days[dayKey(time)];
+	assert.equal(day.turns, 1, "a turn is counted on its day");
+	assert.equal(day.toolCalls, 2, "tool calls are counted on their day");
+	assert.equal(day.edits, 1, "only a productive tool counts as an edit");
 }
 
 //#endregion
