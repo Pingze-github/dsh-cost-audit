@@ -1,8 +1,16 @@
-# DSH Stats
+# DSH Cost Audit
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that
-extends the two places the harness already shows conversation statistics — under
-each turn, and under the whole session — with token detail and **money in RMB**.
+answers one question: **where did the money go, and did acting on it help?**
+
+It puts cost in RMB on the two surfaces the harness already uses for statistics —
+under each turn, and under the whole session — and it counts things nothing else
+in the tree counts, starting with the summarization call a context compaction
+bills (split from the compactions you asked for yourself). On top of that sits
+the part that makes it an *audit* rather than a dashboard: an advisor that names
+what is actually costing you, offers a one-click fix, and then **re-measures the
+metric after you adopt it**, so "I followed the advice" becomes a number instead
+of a feeling.
 
 Everything is rendered in the harness's own stats form: the same icon pill that
 opens a trigger-anchored `dt`/`dd` panel, the same design tokens, the same
@@ -198,13 +206,26 @@ Every field is optional; overrides go in a profile patch layer with the same id.
 ## Install
 
 ```bash
-dsh plugin --profile web add link:/path/to/dsh-stats
+dsh plugin --profile web add github:Pingze-github/dsh-cost-audit
+```
+
+Then **reload the browser page** to pick up the client bundle. From a checkout
+you are editing, install it as a live link instead:
+
+```bash
+dsh plugin --profile web add link:/path/to/dsh-cost-audit
 ```
 
 `link:` keeps the checkout live, so edits to `index.js` / `client.js` are served
-without reinstalling. `dsh-hotswap` (if installed) hot-mounts the new bundle
-entry from the written `dsh.profile.bundles` — no `dsh` restart. **Reload the
-browser page** to pick up the new client bundle.
+without reinstalling. `dsh-hotswap` (if installed) hot-mounts a new bundle entry
+from the written `dsh.profile.bundles` — no `dsh` restart, which matters because
+restarting `dsh web` kills the session hosting it.
+
+The scripts under `scripts/` verify against a **running** deployment, not a
+fixture: `check.sh` is the offline gate, `smoke.sh` sweeps every session on the
+machine through the live route, and `gui-probe.mjs` renders the real GUI in
+headless Chromium. `smoke.sh` needs `DSH_HOME` and an authenticated URL (it reads
+one from `/var/log/dsh-web.log`, or `DSH_STATS_URL`).
 
 ## How it works
 
