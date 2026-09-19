@@ -16,6 +16,8 @@ export interface DshStatsBucket {
 	outputTokens: number;
 	/** Cost in CNY × 1e9, so every shipped per-million rate prices exactly. */
 	costNano: number;
+	/** The cache-read share of `costNano`, which the advisor names. */
+	cacheReadCostNano: number;
 	/** Tokens this plugin could price (a known DeepSeek family was routed). */
 	pricedTokens: number;
 	/** Tokens left out of `costNano` because the routed model had no rate. */
@@ -56,7 +58,37 @@ export interface DshStatsTiming {
 	tools: Record<string, DshStatsToolTiming>;
 }
 
-/** The `dshStats` client view: whole-log tokens, CNY cost, and timings. */
+/**
+ * What the log says about compaction. The summarize calls bill real money that
+ * no other figure in this deployment counts, so `summaryCostNano` is folded into
+ * the session total and `count` / `shadowedTokens` drive the advisory.
+ */
+export interface DshStatsCompaction {
+	/** Successful `compaction/summary` events. */
+	count: number;
+	/** `compaction/end` events carrying an error. */
+	errors: number;
+	/** Model-free prune replacements. */
+	prunes: number;
+	/** Context the compactions rewrote. */
+	shadowedTokens: number;
+	/** What the summarization calls billed, in CNY × 1e9. */
+	summaryCostNano: number;
+	/** Tokens those summarization calls billed. */
+	summaryTokens: number;
+}
+
+/**
+ * One advisory item. `code` and `severity` are stable; the wording lives in the
+ * client's locale dictionaries, so `values` carries numbers and names only.
+ */
+export interface DshStatsAdvice {
+	code: string;
+	severity: "high" | "warn" | "info";
+	values: Record<string, number | string>;
+}
+
+/** The `dshStats` client view: whole-log tokens, CNY cost, timings, and advice. */
 export interface DshStatsProjection {
 	/** Always `CNY` — DeepSeek's list prices are published in RMB. */
 	currency: "CNY";
@@ -70,6 +102,10 @@ export interface DshStatsProjection {
 	turns: Record<string, DshStatsTurn>;
 	/** Operation-type timings, per turn and for the whole session. */
 	timing: { total: DshStatsTiming; turns: Record<string, DshStatsTiming> };
+	/** Compaction activity and its own bill. */
+	compaction: DshStatsCompaction;
+	/** Token-saving advice, most urgent first; empty when there is nothing to say. */
+	advice: DshStatsAdvice[];
 }
 
 /** The `/api/dsh-stats.balance` answer for an account read. */
@@ -82,7 +118,7 @@ export type DshStatsSessionResult = { ok: true; stats: DshStatsProjection } | { 
 
 declare module "@deepseek-ai/dsh-session-projection/types" {
 	interface SessionProjectionMap {
-		/** Whole-log billed tokens, CNY cost, and operation timings. */
+		/** Billed tokens, CNY cost, operation timings, and advisory. */
 		dshStats: DshStatsProjection;
 	}
 }

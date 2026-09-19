@@ -73,6 +73,7 @@ const ctx = {
 	logger: { info() {}, warn() {} }
 };
 
+const RETRIES = 5;
 const mod = await import("../index.js");
 assert.equal(mod.name, "dsh-stats", "plugin name");
 assert.deepEqual(mod.inject, ["sessionProjections"], "declared injection");
@@ -391,10 +392,9 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 	const inert = [
 		{ type: "system/message", data: {} },
 		{ type: "user/message", data: {} },
-		{ type: "step/end", data: { turn: 1, step: 1 } },
 		{ type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } },
 		{ type: "tool/result", data: { turn: 1, step: 1, message: { source: { callId: "unknown" } } } },
-		{ type: "llm/retry-started", data: { turn: 9, step: 9 } }
+		{ type: "compaction/end", data: { compactionId: "none", turn: null } }
 	];
 	for (const { type, data } of inert) {
 		assert.equal(unit.apply(state, { type, seq: 1, time: PEAK, data }), state, `${type} must be ignored`);
@@ -430,7 +430,7 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 	assert.equal(timing.decodeTokens, 100, "decode tokens");
 	assert.equal(timing.toolMs, 3000, "tool wall time");
 	assert.equal(timing.toolCalls, 1, "tool call count");
-	assert.deepEqual(timing.tools, { bash: { calls: 1, ms: 3000 } }, "tool ranking");
+	assert.deepEqual(timing.tools, { bash: { calls: 1, ms: 3000, fast: 0 } }, "tool ranking");
 	assert.deepEqual(view.timing.turns["1"], timing, "the turn carries the same timings");
 }
 
@@ -459,7 +459,7 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 		...call(2, "a", 1000),
 		...call(4, "b", 3000)
 	]);
-	assert.deepEqual(view.timing.total.tools, { grep: { calls: 2, ms: 1000 } }, "same-name tool calls accumulate");
+	assert.deepEqual(view.timing.total.tools, { grep: { calls: 2, ms: 1000, fast: 2 } }, "same-name tool calls accumulate");
 	assert.equal(view.timing.total.toolCalls, 2, "both calls counted");
 }
 
@@ -494,6 +494,200 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 	const { view } = fold([settle(1, 1, USAGE, PEAK)]);
 	assert.equal(view.total.costNano, 0, "no route, no price");
 	assert.equal(view.total.unpricedTokens, 10500, "tokens reported unpriced");
+}
+
+//#endregion
+
+//#region compaction accounting
+
+{
+	// A summarize call is a real billed request that no other figure counts.
+	const T0 = PEAK;
+	const { view } = fold([
+		route("deepseek-flash"),
+		{ type: "compaction/start", seq: 1, time: T0, data: { compactionId: "c1", turn: null } },
+		{
+			type: "compaction/summary",
+			seq: 2,
+			time: T0 + 100,
+			data: {
+				compactionId: "c1",
+				summary: [],
+				shadowedRange: { start: 0, end: 1 },
+				shadowedSeqs: [0, 1],
+				shadowedTokenCount: 640000,
+				provider: "deepseek-official",
+				model: "deepseek-flash",
+				rawOutput: [],
+				llmStreamCall: true,
+				usage: { inputTokens: 0, cacheReadTokens: 640000, cacheWriteTokens: 0, outputTokens: 2000 }
+			}
+		},
+		{ type: "compaction/end", seq: 3, time: T0 + 200, data: { compactionId: "c1", turn: null } }
+	]);
+	assert.equal(view.compaction.count, 1, "compaction counted");
+	assert.equal(view.compaction.errors, 0, "no error recorded");
+	assert.equal(view.compaction.shadowedTokens, 640000, "shadowed tokens summed");
+	assert.equal(view.compaction.summaryCostNano, 640000 * 0.04 * 1000 + 2000 * 8 * 1000, "summary priced at its own model");
+	assert.equal(view.total.costNano, view.compaction.summaryCostNano, "summary cost joins the session total");
+	assert.equal(view.total.cacheReadCostNano, 640000 * 0.04 * 1000, "its cache-read share is kept");
+	assert.equal(view.total.cacheReadTokens, 0, "the summarize replay stays out of the chat buckets");
+	assert.equal(view.timing.total.modelCalls, 0, "a summary is not a chat model call");
+}
+
+{
+	// A failed compaction and a model-free prune.
+	const T0 = PEAK;
+	const { view } = fold([
+		{ type: "compaction/start", seq: 1, time: T0, data: { compactionId: "c1", turn: null } },
+		{ type: "compaction/end", seq: 2, time: T0 + 10, data: { compactionId: "c1", turn: null, error: "summarize failed" } },
+		{ type: "compaction/prune", seq: 3, time: T0 + 20, data: { shadowedRange: { start: 0, end: 2 }, shadowedSeqs: [0, 1, 2], shadowedTokenCount: 1234 } }
+	]);
+	assert.equal(view.compaction.count, 0, "a failed compaction is not a summary");
+	assert.equal(view.compaction.errors, 1, "the failure is recorded");
+	assert.equal(view.compaction.prunes, 1, "the prune is counted");
+	assert.equal(view.compaction.shadowedTokens, 1234, "the prune's shadow price is counted");
+}
+
+//#endregion
+
+//#region advisor
+
+/** The advice codes one event list produces. */
+function adviceCodes(events) {
+	return fold(events).view.advice.map((item) => item.code);
+}
+
+/** `count` completed steps, each a cache-read-heavy settlement. */
+function settlements(count, time) {
+	const events = [];
+	for (let index = 0; index < count; index += 1) {
+		events.push({ type: "step/start", seq: index * 2, time, data: { turn: 1, step: index + 1 } });
+		events.push(
+			settle(1, index + 1, { inputTokens: 1000, cacheReadTokens: 100000, cacheWriteTokens: 0, outputTokens: 10 }, time + 1000)
+		);
+	}
+	return events;
+}
+
+/**
+ * `count` dispatched-and-finished tool calls of one name, each `ms` long.
+ * `args` is a literal, or a generator when every call must target something new.
+ */
+function toolCalls(count, name, args, ms, time) {
+	const events = [];
+	for (let index = 0; index < count; index += 1) {
+		const raw = typeof args === "function" ? args(index) : args;
+		events.push({ type: "tool/call", seq: index, time, data: { turn: 1, step: 1, callId: `c${String(index)}`, name, arguments: raw } });
+		events.push({ type: "tool/result", seq: index, time: time + ms, data: { turn: 1, step: 1, message: { source: { callId: `c${String(index)}` } } } });
+	}
+	return events;
+}
+
+{
+	assert.deepEqual(adviceCodes([route("deepseek-flash")]), [], "a fresh session advises nothing");
+}
+
+{
+	assert.ok(adviceCodes([route("deepseek-flash"), ...settlements(30, PEAK)]).includes("context-reread"), "context re-read share");
+	assert.deepEqual(adviceCodes([route("deepseek-flash"), ...settlements(29, PEAK)]), [], "too few calls to judge");
+}
+
+{
+	const events = [route("deepseek-flash"), ...toolCalls(30, "bash", (index) => JSON.stringify({ command: `echo ${String(index)}` }), 100, PEAK)];
+	assert.ok(adviceCodes(events).includes("fragmented-tools"), "fragmented short calls");
+	assert.ok(!adviceCodes(events).includes("repeated-target"), "distinct commands are not a repeat");
+}
+
+{
+	const slow = [route("deepseek-flash"), ...toolCalls(30, "bash", (index) => JSON.stringify({ command: `sleep 5 # ${String(index)}` }), 9000, PEAK)];
+	assert.deepEqual(adviceCodes(slow), [], "long calls are not fragments");
+}
+
+{
+	const events = [route("deepseek-flash"), ...toolCalls(4, "read", JSON.stringify({ file_path: "/tmp/big.js" }), 10, PEAK)];
+	const codes = adviceCodes(events);
+	assert.ok(codes.includes("repeated-target"), "repeated target");
+}
+
+{
+	// Two compactions is churn even when their share of spend is small.
+	const T0 = PEAK;
+	const summary = (seq, id) => [
+		{ type: "compaction/start", seq, time: T0, data: { compactionId: id, turn: null } },
+		{
+			type: "compaction/summary",
+			seq: seq + 1,
+			time: T0 + 10,
+			data: {
+				compactionId: id,
+				summary: [],
+				shadowedRange: { start: 0, end: 1 },
+				shadowedSeqs: [0],
+				shadowedTokenCount: 1000,
+				provider: "deepseek-official",
+				model: "deepseek-flash",
+				rawOutput: [],
+				llmStreamCall: true,
+				usage: { inputTokens: 10, outputTokens: 10 }
+			}
+		},
+		{ type: "compaction/end", seq: seq + 2, time: T0 + 20, data: { compactionId: id, turn: null } }
+	];
+	const codes = adviceCodes([route("deepseek-flash"), ...summary(1, "a"), ...summary(4, "b")]);
+	assert.ok(codes.includes("compaction-churn"), "repeated compaction is churn");
+}
+
+{
+	const failure = (seq, id) => [
+		{ type: "tool/call", seq, time: PEAK, data: { turn: 1, step: 1, callId: id, name: "bash", arguments: JSON.stringify({ command: "false" }) } },
+		{ type: "tool/result", seq: seq + 1, time: PEAK + 5, data: { turn: 1, step: 1, message: { source: { callId: id } }, error: { name: "ToolError", code: "exit-1" } } }
+	];
+	assert.ok(adviceCodes([route("deepseek-flash"), ...failure(1, "a"), ...failure(3, "b"), ...failure(5, "c")]).includes("tool-failures"), "a failure run advises");
+	assert.deepEqual(adviceCodes([route("deepseek-flash"), ...failure(1, "a"), ...failure(3, "b")]).filter((code) => code === "tool-failures"), [], "two failures is not a run");
+}
+
+{
+	const retries = [];
+	for (let index = 0; index < RETRIES; index += 1) retries.push({ type: "llm/retry-started", seq: index, time: PEAK, data: { turn: 1, step: index + 1 } });
+	const codes = adviceCodes([route("deepseek-flash"), ...retries]);
+	assert.ok(codes.includes("model-retries"), "retry run");
+}
+
+{
+	const steps = [];
+	for (let index = 0; index < 30; index += 1) steps.push({ type: "step/end", seq: index, time: PEAK, data: { turn: 1, step: index + 1 } });
+	assert.ok(adviceCodes([route("deepseek-flash"), ...steps]).includes("idle-grinding"), "steps without a write");
+	const productive = [route("deepseek-flash"), ...steps.slice(0, 29), { type: "tool/call", seq: 100, time: PEAK, data: { turn: 1, step: 30, callId: "w", name: "edit", arguments: JSON.stringify({ file_path: "/tmp/x" }) } }, steps[29]];
+	assert.ok(!adviceCodes(productive).includes("idle-grinding"), "an edit resets the run");
+}
+
+{
+	assert.ok(
+		adviceCodes([
+			route("deepseek-flash"),
+			...settlements(50, PEAK).map((event) =>
+				event.type === "assistant/message"
+					? { ...event, data: { ...event.data, usage: { inputTokens: 100000, cacheReadTokens: 100000, cacheWriteTokens: 0, outputTokens: 10 } } }
+					: event
+			)
+		]).includes("cache-hit-drop"),
+		"a fallen cache-hit rate"
+	);
+}
+
+{
+	// Severity ordering: a failure run outranks the informational rules.
+	const failure = [
+		{ type: "tool/call", seq: 1, time: PEAK, data: { turn: 1, step: 1, callId: "a", name: "bash", arguments: JSON.stringify({ command: "false" }) } },
+		{ type: "tool/result", seq: 2, time: PEAK, data: { turn: 1, step: 1, message: { source: { callId: "a" } }, error: { name: "ToolError", code: "exit-1" } } },
+		{ type: "tool/call", seq: 3, time: PEAK, data: { turn: 1, step: 1, callId: "b", name: "bash", arguments: JSON.stringify({ command: "false" }) } },
+		{ type: "tool/result", seq: 4, time: PEAK, data: { turn: 1, step: 1, message: { source: { callId: "b" } }, error: { name: "ToolError", code: "exit-1" } } },
+		{ type: "tool/call", seq: 5, time: PEAK, data: { turn: 1, step: 1, callId: "c", name: "bash", arguments: JSON.stringify({ command: "false" }) } },
+		{ type: "tool/result", seq: 6, time: PEAK, data: { turn: 1, step: 1, message: { source: { callId: "c" } }, error: { name: "ToolError", code: "exit-1" } } }
+	];
+	const view = fold([route("deepseek-flash"), ...settlements(30, PEAK), ...failure]).view;
+	assert.equal(view.advice[0].code, "tool-failures", "the most urgent advice leads");
 }
 
 //#endregion

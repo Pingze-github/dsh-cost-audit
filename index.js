@@ -58,6 +58,42 @@ const DEFAULT_PRICING = Object.freeze({
 
 const THOUSAND = 1000;
 
+/**
+ * Advisory thresholds. They are deliberately conservative: an advisor that
+ * cries wolf stops being read, so every one of these describes a pattern that
+ * is already sustained rather than a single unlucky step.
+ */
+/** A tool call shorter than this reads as a fragment, not a real step. */
+const FAST_CALL_MS = 2000;
+/** Sustained fragmentation: at least this many fast calls... */
+const FRAGMENT_CALLS = 30;
+/** ...and at least this share of that tool's calls. */
+const FRAGMENT_SHARE = 0.6;
+/** Re-dispatching the same tool with the same target this often is a loop. */
+const REPEAT_CALLS = 4;
+/** Summary calls that cost at least this share of the session are worth naming. */
+const COMPACTION_COST_SHARE = 0.1;
+/** Model calls before a cache-hit figure is statistically meaningful. */
+const CACHE_SAMPLE = 50;
+/** Below this cache-hit share, input bills at the miss rate far more often. */
+const CACHE_HIT_FLOOR = 0.85;
+/** Model settlements before the re-read share is worth reporting. */
+const REREAD_SAMPLE = 30;
+/**
+ * Share of session spend that must be context re-read before advising. A third
+ * is the line: below it, generation and cold input are the bigger stories.
+ */
+const REREAD_SHARE = 0.35;
+/** Consecutive failures of one tool before advising a human stop. */
+const FAILURE_RUN = 3;
+/** Model retries in one session before advising. */
+const RETRY_RUN = 5;
+/** Steps without a write, an edit, or a presented deliverable. */
+const IDLE_STEPS = 30;
+/** Bounded memory for repeated-target and per-tool failure tallies. */
+const TARGET_MEMORY = 32;
+const TOOL_MEMORY = 24;
+
 //#region config
 
 /**
@@ -147,6 +183,8 @@ const bucketShape = {
   cacheWriteTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   costNano: z.number().int().nonnegative(),
+  /** The cache-read share of `costNano`, kept so the advisor can name it. */
+  cacheReadCostNano: z.number().int().nonnegative(),
   /** Tokens this plugin could price (a known DeepSeek family was routed). */
   pricedTokens: z.number().int().nonnegative(),
   /** Tokens left out of `costNano` because the routed model had no rate here. */
@@ -175,7 +213,10 @@ const timingShape = {
   /** tool/call → its tool/result, matched by callId. */
   toolMs: z.number().nonnegative(),
   toolCalls: z.number().int().nonnegative(),
-  tools: z.record(z.string(), z.object({ calls: z.number().int().nonnegative(), ms: z.number().nonnegative() }).strict()),
+  tools: z.record(
+    z.string(),
+    z.object({ calls: z.number().int().nonnegative(), ms: z.number().nonnegative(), fast: z.number().int().nonnegative() }).strict()
+  ),
 };
 
 const timingSchema = z.object(timingShape).strict();
@@ -207,8 +248,8 @@ function addTiming(left, delta) {
   const entries = Object.entries(delta.tools ?? {});
   const tools = entries.length === 0 ? left.tools : { ...left.tools };
   for (const [name, add] of entries) {
-    const current = tools[name] ?? { calls: 0, ms: 0 };
-    tools[name] = { calls: current.calls + add.calls, ms: current.ms + add.ms };
+    const current = tools[name] ?? { calls: 0, ms: 0, fast: 0 };
+    tools[name] = { calls: current.calls + add.calls, ms: current.ms + add.ms, fast: current.fast + (add.fast ?? 0) };
   }
   return {
     wallMs: left.wallMs + (delta.wallMs ?? 0),
@@ -242,6 +283,113 @@ function withTiming(state, turn, delta) {
   };
 }
 
+/** What the whole log says about compaction — the spend no other figure counts. */
+const compactionShape = {
+  /** Successful `compaction/summary` events. */
+  count: z.number().int().nonnegative(),
+  /** `compaction/end` events carrying an error. */
+  errors: z.number().int().nonnegative(),
+  /** `compaction/prune` events (model-free shadow replacements). */
+  prunes: z.number().int().nonnegative(),
+  /** Summed `shadowedTokenCount` — context the compaction rewrote. */
+  shadowedTokens: z.number().int().nonnegative(),
+  /** What the summarization calls themselves billed, in CNY × 1e9. */
+  summaryCostNano: z.number().int().nonnegative(),
+  /** Tokens those summarization calls billed. */
+  summaryTokens: z.number().int().nonnegative(),
+};
+
+const compactionSchema = z.object(compactionShape).strict();
+
+const ZERO_COMPACTION = Object.freeze({
+  count: 0,
+  errors: 0,
+  prunes: 0,
+  shadowedTokens: 0,
+  summaryCostNano: 0,
+  summaryTokens: 0,
+});
+
+/** The bounded raw tallies the advisor reads. State only — never on the wire. */
+const signalShape = {
+  /** `"<tool>\u0000<target>"` → how often that exact target was dispatched. */
+  targets: z.record(z.string(), z.object({ name: z.string(), target: z.string(), count: z.number().int().nonnegative() }).strict()),
+  /** Tool name → its failure count. */
+  toolErrors: z.record(z.string(), z.number().int().nonnegative()),
+  consecutiveFailures: z.number().int().nonnegative(),
+  lastFailedTool: z.string(),
+  retries: z.number().int().nonnegative(),
+  productiveCalls: z.number().int().nonnegative(),
+  stepsSinceProductive: z.number().int().nonnegative(),
+  productiveThisStep: z.boolean(),
+};
+
+const signalsSchema = z.object(signalShape).strict();
+
+const ZERO_SIGNALS = Object.freeze({
+  targets: Object.freeze({}),
+  toolErrors: Object.freeze({}),
+  consecutiveFailures: 0,
+  lastFailedTool: "",
+  retries: 0,
+  productiveCalls: 0,
+  stepsSinceProductive: 0,
+  productiveThisStep: false,
+});
+
+/** Tools whose call means the session actually produced or shipped something. */
+const PRODUCTIVE_TOOLS = Object.freeze(new Set(["write", "edit", "str_replace_editor", "present"]));
+
+/**
+ * The stable identity of one tool call's target, for repeat detection: the file
+ * it touched, the command's first line, or the pattern it searched for.
+ * @param name - tool name.
+ * @param argsRaw - the call's raw argument JSON.
+ * @returns the target label, or "" when the call has no identity worth tracking.
+ */
+function targetOf(name, argsRaw) {
+  if (typeof argsRaw !== "string" || argsRaw === "") return "";
+  try {
+    const args = JSON.parse(argsRaw);
+    const path = args?.file_path ?? args?.path ?? args?.notebook_path;
+    if (typeof path === "string" && path !== "") return path.slice(0, 120);
+    const command = args?.command;
+    if (typeof command === "string" && command.trim() !== "") return command.trim().split("\n")[0].slice(0, 120);
+    const pattern = args?.pattern;
+    if (typeof pattern === "string" && pattern !== "") return pattern.slice(0, 120);
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+/**
+ * Bump one bounded tally, evicting the smallest entry once the cap is reached
+ * so a hostile log of unique targets cannot grow the state without bound.
+ * @param table - the tally table.
+ * @param key - the entry key.
+ * @param entry - the entry to insert or refresh.
+ * @param cap - maximum entries.
+ * @returns the next table (the same reference when nothing changed).
+ */
+function bumpTally(table, key, entry, cap) {
+  const existing = table[key];
+  if (existing !== undefined) return { ...table, [key]: entry };
+  const keys = Object.keys(table);
+  if (keys.length < cap) return { ...table, [key]: entry };
+  let smallest = keys[0];
+  for (const candidate of keys) {
+    const left = table[candidate].count ?? table[candidate];
+    const right = table[smallest].count ?? table[smallest];
+    if (left < right) smallest = candidate;
+  }
+  const floor = table[smallest].count ?? table[smallest];
+  const next = entry.count ?? entry;
+  if (next <= floor) return table;
+  const { [smallest]: _evicted, ...rest } = table;
+  return { ...rest, [key]: entry };
+}
+
 /**
  * The provider's output-token count for one settlement, when it reported a
  * usable one (decode throughput divides by exactly this).
@@ -250,6 +398,11 @@ function outputTokensOf(usage) {
   if (usage === null || typeof usage !== "object") return null;
   const value = usage.outputTokens;
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** Prompt-side total of one billed bucket. */
+function inputTokensOf(bucket) {
+  return bucket.uncachedInputTokens + bucket.cacheReadTokens + bucket.cacheWriteTokens;
 }
 
 /** The first output-token instant of one embedded stream, or null when unreadable. */
@@ -279,6 +432,8 @@ function statsView(state) {
     total: state.total,
     turns,
     timing: state.timing,
+    compaction: state.compaction,
+    advice: buildAdvice(state),
   };
 }
 
@@ -288,6 +443,7 @@ const ZERO_BUCKET = Object.freeze({
   cacheWriteTokens: 0,
   outputTokens: 0,
   costNano: 0,
+  cacheReadCostNano: 0,
   pricedTokens: 0,
   unpricedTokens: 0,
 });
@@ -319,6 +475,10 @@ const stateSchema = z
       })
       .strict()
       .nullable(),
+    /** What the log says about compaction, and what it cost. */
+    compaction: compactionSchema,
+    /** Bounded raw tallies the advisor reads. */
+    signals: signalsSchema,
     /** callId → dispatched tool call still awaiting its result. */
     pendingCalls: z.record(
       z.string(),
@@ -363,16 +523,16 @@ function priceUsage(usage, family, peak, pricing) {
     return { ...ZERO_BUCKET, uncachedInputTokens: u, cacheReadTokens: c, cacheWriteTokens: w, outputTokens: o, unpricedTokens: billed };
   }
   const rate = pricing[family][peak ? "peak" : "off"];
+  const cacheReadCostNano = Math.round(c * rate.cacheHit * THOUSAND);
   const costNano =
-    Math.round(c * rate.cacheHit * THOUSAND) +
-    Math.round((u + w) * rate.cacheMiss * THOUSAND) +
-    Math.round(o * rate.output * THOUSAND);
+    cacheReadCostNano + Math.round((u + w) * rate.cacheMiss * THOUSAND) + Math.round(o * rate.output * THOUSAND);
   return {
     uncachedInputTokens: u,
     cacheReadTokens: c,
     cacheWriteTokens: w,
     outputTokens: o,
     costNano,
+    cacheReadCostNano,
     pricedTokens: billed,
     unpricedTokens: 0,
   };
@@ -391,6 +551,7 @@ function addBuckets(left, right) {
     cacheWriteTokens: left.cacheWriteTokens + right.cacheWriteTokens,
     outputTokens: left.outputTokens + right.outputTokens,
     costNano: left.costNano + right.costNano,
+    cacheReadCostNano: left.cacheReadCostNano + right.cacheReadCostNano,
     pricedTokens: left.pricedTokens + right.pricedTokens,
     unpricedTokens: left.unpricedTokens + right.unpricedTokens,
   };
@@ -411,6 +572,7 @@ function subtractBuckets(next, previous) {
     cacheWriteTokens: next.cacheWriteTokens - previous.cacheWriteTokens,
     outputTokens: next.outputTokens - previous.outputTokens,
     costNano: next.costNano - previous.costNano,
+    cacheReadCostNano: next.cacheReadCostNano - previous.cacheReadCostNano,
     pricedTokens: next.pricedTokens - previous.pricedTokens,
     unpricedTokens: next.unpricedTokens - previous.unpricedTokens,
   };
@@ -424,6 +586,7 @@ function isZeroBucket(bucket) {
     bucket.cacheWriteTokens === 0 &&
     bucket.outputTokens === 0 &&
     bucket.costNano === 0 &&
+    bucket.cacheReadCostNano === 0 &&
     bucket.pricedTokens === 0 &&
     bucket.unpricedTokens === 0
   );
@@ -506,9 +669,18 @@ function closeStep(state, event) {
   return withTiming({ ...state, openStep: null }, open.turn, delta);
 }
 
+/** Whether one tool result reports a failure — its block flag or its logged error identity. */
+function isFailedToolResult(event) {
+  const data = event.data;
+  if (data?.error !== undefined && data.error !== null) return true;
+  const content = data?.message?.content;
+  return Array.isArray(content) && content.some((block) => block?.isError === true);
+}
+
 /**
- * Close the tool call a `tool/result` answers, attributing its wall time to the
- * turn that dispatched it and to its own tool name.
+ * Close the tool call a `tool/result` answers: its wall time goes to the turn
+ * that dispatched it and to its own tool name, and its outcome drives the
+ * failure run the advisor reads.
  * @param state - the fold state.
  * @param event - the `tool/result` event.
  * @returns the next state.
@@ -519,11 +691,162 @@ function closeToolCall(state, event) {
   if (pending === undefined) return state;
   const { [callId]: _closed, ...rest } = state.pendingCalls;
   const ms = Math.max(0, event.time - pending.time);
-  return withTiming({ ...state, pendingCalls: rest }, pending.turn, {
+  const failed = isFailedToolResult(event);
+  const signals = {
+    ...state.signals,
+    consecutiveFailures: failed ? (state.signals.lastFailedTool === pending.name ? state.signals.consecutiveFailures + 1 : 1) : 0,
+    lastFailedTool: failed ? pending.name : "",
+    toolErrors: failed
+      ? bumpTally(state.signals.toolErrors, pending.name, (state.signals.toolErrors[pending.name] ?? 0) + 1, TOOL_MEMORY)
+      : state.signals.toolErrors,
+  };
+  return withTiming({ ...state, pendingCalls: rest, signals }, pending.turn, {
     toolMs: ms,
     toolCalls: 1,
-    tools: { [pending.name]: { calls: 1, ms } },
+    tools: { [pending.name]: { calls: 1, ms, fast: ms < FAST_CALL_MS ? 1 : 0 } },
   });
+}
+
+/**
+ * Fold one successful compaction: its summarize call is a real billed request
+ * that no other figure in this deployment counts, so its cost joins the session
+ * total and its own sub-account keeps it nameable.
+ *
+ * The summarize call's tokens deliberately stay out of the chat token buckets —
+ * those describe what the conversation read and wrote, and merging a 640K-token
+ * replay into them would silently wreck the cache-hit figure.
+ *
+ * @param state - the fold state.
+ * @param event - the `compaction/summary` event.
+ * @param pricing - the effective price table.
+ * @returns the next state.
+ */
+function foldCompactionSummary(state, event, pricing) {
+  const data = event.data;
+  const usage = data?.usage;
+  const compaction = {
+    count: state.compaction.count + 1,
+    errors: state.compaction.errors,
+    prunes: state.compaction.prunes,
+    shadowedTokens: state.compaction.shadowedTokens + (Number.isSafeInteger(data?.shadowedTokenCount) ? data.shadowedTokenCount : 0),
+    summaryCostNano: state.compaction.summaryCostNano,
+    summaryTokens: state.compaction.summaryTokens,
+  };
+  if (usage !== null && typeof usage === "object") {
+    const model = typeof data.model === "string" && data.model !== "" ? data.model : state.model;
+    const bucket = priceUsage(usage, familyOf(model), isPeak(event.time), pricing);
+    if (bucket !== null) {
+      compaction.summaryCostNano += bucket.costNano;
+      compaction.summaryTokens += bucket.pricedTokens + bucket.unpricedTokens;
+      return {
+        ...state,
+        compaction,
+        total: {
+          ...state.total,
+          costNano: state.total.costNano + bucket.costNano,
+          cacheReadCostNano: state.total.cacheReadCostNano + bucket.cacheReadCostNano,
+        },
+      };
+    }
+  }
+  return { ...state, compaction };
+}
+
+//#endregion
+
+//#region advisor
+
+/**
+ * The token-saving advice this fold can justify right now, most urgent first.
+ *
+ * Pure over the fold state, and deliberately conservative: every rule needs a
+ * sustained pattern, because an advisor that cries wolf stops being read. The
+ * codes are stable identifiers — the browser half owns the wording, so each
+ * value here is a number or a name, never a sentence.
+ *
+ * @param state - the fold state.
+ * @returns the advice list (possibly empty).
+ */
+function buildAdvice(state) {
+  const advice = [];
+  const total = state.total;
+  const signals = state.signals;
+  const modelCalls = state.timing.total.modelCalls;
+
+  // Re-reading the same context every turn is usually the largest single line
+  // of spend, and the one a smaller context actually fixes.
+  if (modelCalls >= REREAD_SAMPLE && total.costNano > 0) {
+    const share = total.cacheReadCostNano / total.costNano;
+    if (share >= REREAD_SHARE) {
+      advice.push({
+        code: "context-reread",
+        severity: "warn",
+        values: { percent: Math.round(share * 100), costNano: total.cacheReadCostNano, totalCostNano: total.costNano, calls: modelCalls },
+      });
+    }
+  }
+
+  // Fragmented calls: many short commands, each dragging its output into the
+  // context that every later request re-reads.
+  let fragmented;
+  for (const [name, tool] of Object.entries(state.timing.total.tools)) {
+    if (tool.calls < FRAGMENT_CALLS || tool.fast / tool.calls < FRAGMENT_SHARE) continue;
+    if (fragmented === undefined || tool.fast > fragmented.fast) fragmented = { tool: name, calls: tool.calls, fast: tool.fast };
+  }
+  if (fragmented !== undefined) advice.push({ code: "fragmented-tools", severity: "warn", values: fragmented });
+
+  // The same target dispatched again and again — a re-read, or a loop.
+  let repeated;
+  for (const entry of Object.values(signals.targets)) {
+    if (entry.count < REPEAT_CALLS) continue;
+    if (repeated === undefined || entry.count > repeated.count) repeated = entry;
+  }
+  if (repeated !== undefined) {
+    advice.push({ code: "repeated-target", severity: "info", values: { tool: repeated.name, target: repeated.target, count: repeated.count } });
+  }
+
+  // Compaction churn, and the summarize calls' own bill — spend no other figure
+  // in this deployment counts.
+  const compactionShare = total.costNano === 0 ? 0 : state.compaction.summaryCostNano / total.costNano;
+  if (state.compaction.count >= 2 || compactionShare >= COMPACTION_COST_SHARE) {
+    advice.push({
+      code: "compaction-churn",
+      severity: "warn",
+      values: {
+        count: state.compaction.count,
+        costNano: state.compaction.summaryCostNano,
+        tokens: state.compaction.summaryTokens,
+        shadowed: state.compaction.shadowedTokens,
+        percent: Math.round(compactionShare * 100),
+      },
+    });
+  }
+
+  // One tool failing over and over: the next attempt is unlikely to be the one
+  // that works.
+  if (signals.consecutiveFailures >= FAILURE_RUN) {
+    advice.push({ code: "tool-failures", severity: "high", values: { tool: signals.lastFailedTool, consecutive: signals.consecutiveFailures } });
+  }
+
+  if (signals.retries >= RETRY_RUN) advice.push({ code: "model-retries", severity: "warn", values: { retries: signals.retries } });
+
+  // Many steps, nothing written: investigation without a conclusion.
+  if (signals.stepsSinceProductive >= IDLE_STEPS) {
+    advice.push({ code: "idle-grinding", severity: "warn", values: { steps: signals.stepsSinceProductive, calls: modelCalls, edits: signals.productiveCalls } });
+  }
+
+  // Cache misses bill at roughly fifty times the hit rate, so a fallen hit rate
+  // is a silent multiplier on every later request.
+  if (modelCalls >= CACHE_SAMPLE) {
+    const input = inputTokensOf(total);
+    if (input > 0) {
+      const hit = total.cacheReadTokens / input;
+      if (hit < CACHE_HIT_FLOOR) advice.push({ code: "cache-hit-drop", severity: "info", values: { percent: Math.round(hit * 100), calls: modelCalls } });
+    }
+  }
+
+  const rank = { high: 0, warn: 1, info: 2 };
+  return advice.sort((left, right) => (rank[left.severity] ?? 3) - (rank[right.severity] ?? 3));
 }
 
 //#endregion
@@ -543,7 +866,7 @@ function createStatsProjection(pricing) {
   let viewValue;
   return {
     key: PROJECTION_KEY,
-    stateVersion: 2,
+    stateVersion: 3,
     stateSchema,
     init: () => ({
       provider: "",
@@ -556,6 +879,8 @@ function createStatsProjection(pricing) {
       timing: { total: ZERO_TIMING, turns: {} },
       turnStart: null,
       openStep: null,
+      compaction: ZERO_COMPACTION,
+      signals: ZERO_SIGNALS,
       pendingCalls: {},
     }),
     apply: (state, event) => {
@@ -574,7 +899,12 @@ function createStatsProjection(pricing) {
         if (provider !== state.provider || model !== state.model) next = { ...next, provider, model };
       } else if (type === "llm/retry-started") {
         const key = `${event.data.turn}:${event.data.step}`;
-        if (state.lastSlot === key) next = { ...next, lastSlot: null };
+        next = {
+          ...next,
+          ...(state.lastSlot === key ? { lastSlot: null } : {}),
+          // A retried attempt opens a fresh tool-failure run.
+          signals: { ...state.signals, retries: state.signals.retries + 1, consecutiveFailures: 0, lastFailedTool: "" },
+        };
       } else if (type === "turn/start") {
         if (state.turnStart !== event.time || state.openStep !== null) next = { ...next, turnStart: event.time, openStep: null };
       } else if (type === "step/start") {
@@ -595,15 +925,36 @@ function createStatsProjection(pricing) {
         let turn = data?.turn;
         if (!Number.isInteger(turn) && state.openStep !== null) turn = state.openStep.turn;
         if (typeof data?.callId === "string" && typeof data?.name === "string" && Number.isInteger(turn)) {
+          const target = targetOf(data.name, data.arguments);
+          const key = `${data.name}\u0000${target}`;
+          const targets = target === "" ? state.signals.targets : bumpTally(state.signals.targets, key, { name: data.name, target, count: (state.signals.targets[key]?.count ?? 0) + 1 }, TARGET_MEMORY);
+          const productive = PRODUCTIVE_TOOLS.has(data.name);
           next = {
             ...next,
             pendingCalls: { ...state.pendingCalls, [data.callId]: { name: data.name, time: event.time, turn } },
+            signals: {
+              ...state.signals,
+              targets,
+              productiveCalls: state.signals.productiveCalls + (productive ? 1 : 0),
+              productiveThisStep: state.signals.productiveThisStep || productive,
+            },
           };
         }
       } else if (type === "tool/result") {
         next = closeToolCall(next, event);
       } else if (type === "step/end") {
-        if (state.openStep !== null) next = { ...next, openStep: null };
+        const signals = state.signals.productiveThisStep
+          ? { ...state.signals, productiveThisStep: false, stepsSinceProductive: 0 }
+          : { ...state.signals, stepsSinceProductive: state.signals.stepsSinceProductive + 1 };
+        next = { ...next, openStep: null, signals };
+      } else if (type === "compaction/summary") {
+        next = foldCompactionSummary(next, event, pricing);
+      } else if (type === "compaction/end") {
+        const failed = typeof event.data?.error === "string" && event.data.error !== "";
+        if (failed) next = { ...next, compaction: { ...state.compaction, errors: state.compaction.errors + 1 } };
+      } else if (type === "compaction/prune") {
+        const shadowed = Number.isSafeInteger(event.data?.shadowedTokenCount) ? event.data.shadowedTokenCount : 0;
+        next = { ...next, compaction: { ...state.compaction, prunes: state.compaction.prunes + 1, shadowedTokens: state.compaction.shadowedTokens + shadowed } };
       } else if (type === "turn/end") {
         const turn = event.data?.turn;
         const wallMs = state.turnStart === null ? 0 : Math.max(0, event.time - state.turnStart);
@@ -627,6 +978,16 @@ function createStatsProjection(pricing) {
           total: z.object(bucketShape).strict(),
           turns: z.record(z.string(), z.object({ ...bucketShape, model: z.string() }).strict()),
           timing: timingViewSchema,
+          compaction: compactionSchema,
+          advice: z.array(
+            z
+              .object({
+                code: z.string(),
+                severity: z.string(),
+                values: z.record(z.string(), z.union([z.number(), z.string()])),
+              })
+              .strict()
+          ),
         })
         .strict(),
       view: (state) => {

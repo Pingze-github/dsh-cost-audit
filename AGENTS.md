@@ -83,6 +83,21 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   `(gap + pillWidth) / 2` with an inline `translateX` and clears it on unmount
   and whenever it falls back to its own line. React never set a `style` on that
   node, so the shift survives the official component's re-renders.
+- **`str.replace` in the patch scripts hits every occurrence.** The two locale
+  dictionaries both end with the same key, so a patch anchored there pasted the
+  Chinese advice block into the English dict as well. Key parity cannot see it —
+  `check.sh` now asserts every advice string actually differs between locales.
+- **Compaction spend is invisible everywhere else.** `compaction/summary` carries
+  the summarize call's own `usage`, and nothing in the tree reads it: not
+  `tokenUsage`, not `sessionStats`, not `dsh-context`. `dshStats` folds it into
+  the session total and names it in its own panel row.
+- **`web/deepseek-search-llm-request` and `session/title-llm-request` log only a
+  request body** — no usage, so their spend is not merely uncounted but
+  unmeasurable from the log. Do not promise a figure for them.
+- **`ask_user_question` time is human time.** A tool call's wall time is
+  dispatch → result, so waiting for a human shows up as tool time (our session:
+  18 minutes of 27). The per-tool breakdown is what makes this legible; do not
+  "fix" it by dropping slow calls.
 - `dsh plugin add` only writes the profile manifest; a bundle becomes a profile
   layer at boot **unless** `dsh-hotswap` is mounted, which watches
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or

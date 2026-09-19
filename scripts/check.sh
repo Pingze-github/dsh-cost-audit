@@ -66,6 +66,38 @@ for (const prefix of ["turn", "session"]) {
 const missing = [...asked].filter((key) => !zh.has(key));
 assert.deepEqual(missing, [], "every requested label is translated");
 
+// Advice wording is reached through a code → key-segment table, so it needs
+// its own completeness check: every code must have a title and a body in both
+// locales, or the panel renders a raw key.
+const adviceStart = client.indexOf("const ADVICE_KEYS = {");
+assert.ok(adviceStart > 0, "the advice key table is declared");
+const adviceTable = client.slice(adviceStart, client.indexOf("};", adviceStart));
+const adviceCodes = [...adviceTable.matchAll(/"([a-z-]+)":\s*"([a-zA-Z]+)"/g)].map((match) => [match[1], match[2]]);
+assert.equal(adviceCodes.length, 9, "nine advice codes are tabled");
+for (const [code, segment] of adviceCodes) {
+  for (const [name, dict] of [["zh", zh], ["en", en]]) {
+    assert.ok(dict.has(`advice.${segment}.title`), `${name} title for ${code}`);
+    assert.ok(dict.has(`advice.${segment}.body`), `${name} body for ${code}`);
+  }
+  assert.match(client, new RegExp(`"${code}"`), `the host can emit ${code}`);
+}
+
+// Key parity cannot see a translation that was pasted into the wrong locale,
+// which is exactly how the advice block first shipped. Every advice string must
+// actually differ between the two locales.
+const dictValue = (name, key) => {
+  const start = client.indexOf(`const ${name} = {`);
+  const body = client.slice(start, client.indexOf("\n\t\t};", start));
+  const match = new RegExp(`"${key.replace(".", "\\.")}":\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(body);
+  return match === null ? null : match[1];
+};
+for (const [code, segment] of adviceCodes) {
+  for (const suffix of ["title", "body"]) {
+    const key = `advice.${segment}.${suffix}`;
+    assert.notEqual(dictValue("DICT_ZH", key), dictValue("DICT_EN", key), `${key} is translated, not copied`);
+  }
+}
+
 process.stdout.write(`check: locales OK (${String(zh.size)} keys, ${String(asked.size)} requested)\n`);
 NODE
 

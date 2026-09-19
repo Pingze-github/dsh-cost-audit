@@ -35,6 +35,8 @@ DeepSeek billing API:
 | Row | Meaning |
 | --- | --- |
 | Session cost | 会话总费用, CNY |
+| of which cache re-read | 其中缓存重读 — the part of the bill that is the same context read again |
+| of which compaction | 其中压缩摘要 — the summarize calls' own bill, which **no other display counts** |
 | Cache hit / read / uncached / cache write / total input / output | whole-session token buckets |
 | **Timing** | 会话耗时分布 — see below |
 | Account balance | 总余额, live |
@@ -54,6 +56,29 @@ tool rows rank their own tool names:
 | Tool time | 工具调用用时 — `tool/call` → `tool/result`, with the call count |
 | Other overhead | 其他开销 — wall time the two above do not account for |
 | By tool | 工具明细 — the busiest 6 tool names, then one row for the tail |
+
+### Token-saving tips (省 Token 建议)
+
+A fourth pill appears **only while there is something worth saying** — a healthy
+session pays no space for it. It opens a list of data-grounded suggestions, each
+with a severity, a one-line fix, and a per-session Dismiss:
+
+| Code | Fires when |
+| --- | --- |
+| `context-reread` | cache re-read is ≥ 35% of the session's spend (over 30+ model calls) |
+| `fragmented-tools` | one tool has 30+ calls, 60%+ of them under 2s |
+| `repeated-target` | the same tool hits the same file/command 4+ times |
+| `compaction-churn` | 2+ compactions, or the summaries themselves cost ≥ 10% of the session |
+| `tool-failures` | one tool fails 3 times in a row |
+| `model-retries` | 5+ model retries |
+| `idle-grinding` | 30+ steps with no write, edit, or deliverable |
+| `cache-hit-drop` | hit rate below 85% over 50+ calls |
+| `balance-low` | the balance covers fewer than five sessions at this burn rate |
+
+Every one is folded from the durable log — **the advisor never calls a model**,
+because a token-saving feature that spends tokens is self-defeating. The
+thresholds are deliberately conservative and every rule needs a sustained
+pattern: an advisor that cries wolf stops being read.
 
 The interface follows the harness locale: Simplified Chinese under `zh`, English
 under `en`.

@@ -89,7 +89,35 @@ window.__ModuleLoader__.load({
 			"timing.calls": "{count} 次",
 			"duration.seconds": "{seconds}秒",
 			"duration.minutes": "{minutes}分{seconds}秒",
-			"tps": "{tps} tok/s"
+			"tps": "{tps} tok/s",
+			"session.cacheReadCost": "其中缓存重读",
+			"session.compaction": "其中压缩摘要",
+			"session.compactionValue": "{cost} · {count} 次压缩",
+			"advice.pill": "{count} 条建议",
+			"advice.title": "省 Token 建议",
+			"advice.high": "紧急",
+			"advice.warn": "注意",
+			"advice.info": "参考",
+			"advice.dismiss": "忽略这条",
+			"advice.restore": "恢复已忽略的建议",
+			"advice.contextReread.title": "上下文重读占了大头",
+			"advice.contextReread.body": "本次会话 {totalCost} 里有 {cost}（{percent}%）是同一份上下文被重读了 {calls} 次。缩小上下文比少输出更省：开新会话、压缩，或让工具少吐内容。",
+			"advice.fragmentedTools.title": "碎调用偏多",
+			"advice.fragmentedTools.body": "{tool} 调用了 {calls} 次，其中 {fast} 次不到 2 秒。每次的输出都会进入上下文、并在之后每一轮被重读 —— 合并成一个脚本更省。",
+			"advice.repeatedTarget.title": "同一目标反复调用",
+			"advice.repeatedTarget.body": "{tool} 对同一个目标调用了 {count} 次：{target}",
+			"advice.compactionChurn.title": "压缩偏频繁 / 摘要本身在花钱",
+			"advice.compactionChurn.body": "已压缩 {count} 次，摘要本身花掉 {cost}（{percent}% 会话费用、{tokens} tok），重写了 {shadowed} tok 上下文。把 thresholdRatio 从 0.8 降到 0.3，每次摘要回放可从约 640K 降到约 140K。",
+			"advice.toolFailures.title": "同一工具连续失败",
+			"advice.toolFailures.body": "{tool} 连续失败 {consecutive} 次。再试一次大概率还是一样 —— 先停下来看错误。",
+			"advice.modelRetries.title": "模型重试偏多",
+			"advice.modelRetries.body": "已重试 {retries} 次。重试会重复计费 —— 先确认是限速、超时，还是请求本身有问题。",
+			"advice.idleGrinding.title": "只有调查、没有产出",
+			"advice.idleGrinding.body": "连续 {steps} 步没有 write / edit / present（{calls} 次模型调用）。可能在反复调查 —— 人工给个方向比继续烧 token 划算。",
+			"advice.cacheHitDrop.title": "缓存命中率下滑",
+			"advice.cacheHitDrop.body": "{calls} 次调用里命中率 {percent}%。未命中按约 50 倍计价 —— 查一下是否有东西每轮在改请求头（AGENTS.md、技能注入）。",
+			"advice.balanceLow.title": "余额偏低",
+			"advice.balanceLow.body": "余额 {balance}，本会话已花 {cost}。按这个速度不多了。"
 		};
 
 		const DICT_EN = {
@@ -136,7 +164,35 @@ window.__ModuleLoader__.load({
 			"timing.calls": "{count} calls",
 			"duration.seconds": "{seconds}s",
 			"duration.minutes": "{minutes}m {seconds}s",
-			"tps": "{tps} tok/s"
+			"tps": "{tps} tok/s",
+			"session.cacheReadCost": "of which cache re-read",
+			"session.compaction": "of which compaction",
+			"session.compactionValue": "{cost} · {count}×",
+			"advice.pill": "{count} tips",
+			"advice.title": "Token-saving tips",
+			"advice.high": "Urgent",
+			"advice.warn": "Watch",
+			"advice.info": "FYI",
+			"advice.dismiss": "Dismiss",
+			"advice.restore": "Show dismissed tips",
+			"advice.contextReread.title": "Most spend is context re-read",
+			"advice.contextReread.body": "{cost} of {totalCost} ({percent}%) is the same context re-read across {calls} requests. A smaller context saves more than shorter answers: start a fresh session, compact, or have tools emit less.",
+			"advice.fragmentedTools.title": "Fragmented calls",
+			"advice.fragmentedTools.body": "{tool} ran {calls} times, {fast} of them under 2s. Every result joins the context and is re-read on later turns — merging them into one script saves both.",
+			"advice.repeatedTarget.title": "Same target again and again",
+			"advice.repeatedTarget.body": "{tool} hit the same target {count} times: {target}",
+			"advice.compactionChurn.title": "Compaction churn, and its own bill",
+			"advice.compactionChurn.body": "{count} compactions; the summaries themselves cost {cost} ({percent}% of the session, {tokens} tok) and rewrote {shadowed} tok of context. Lowering thresholdRatio from 0.8 to 0.3 shrinks each replay from ~640K to ~140K.",
+			"advice.toolFailures.title": "Repeated tool failure",
+			"advice.toolFailures.body": "{tool} failed {consecutive} times in a row. Another attempt probably fails the same way — stop and read the error.",
+			"advice.modelRetries.title": "Many model retries",
+			"advice.modelRetries.body": "{retries} retries so far. Retries bill twice — check whether it is rate limiting, a timeout, or the request itself.",
+			"advice.idleGrinding.title": "Investigation without output",
+			"advice.idleGrinding.body": "{steps} steps with no write, edit, or deliverable ({calls} model calls). Possibly going in circles — a human steer is cheaper than more tokens.",
+			"advice.cacheHitDrop.title": "Cache hit rate has fallen",
+			"advice.cacheHitDrop.body": "{percent}% hit rate over {calls} calls. A miss bills at roughly 50× — check whether something rewrites the request head every turn (AGENTS.md, skill injection).",
+			"advice.balanceLow.title": "Balance running low",
+			"advice.balanceLow.body": "Balance {balance}; this session has spent {cost}."
 		};
 
 		//#endregion
@@ -163,9 +219,11 @@ window.__ModuleLoader__.load({
 			// underneath the lifted row.
 			".dshstats-row[data-dsh-stats-inline]{max-width:none;height:var(--dshstats-lift,auto);margin:calc(-1 * var(--dshstats-lift,0px)) 0 0;padding:0;justify-content:flex-start;pointer-events:none}",
 			// A margin (not padding) carries the indent: it may legitimately be
-			// negative when this pill is wider than the official content, and
-			// padding would clamp that to zero.
-			".dshstats-row[data-dsh-stats-inline]>*{pointer-events:auto;margin-left:var(--dshstats-indent,0px)}",
+			// negative when this row is wider than the official content, and
+			// padding would clamp that to zero. Only the first child takes it —
+			// the row's own gap spaces everything after.
+			".dshstats-row[data-dsh-stats-inline]>*{pointer-events:auto}",
+			".dshstats-row[data-dsh-stats-inline]>:first-child{margin-left:var(--dshstats-indent,0px)}",
 			".dshstats-pill{box-sizing:border-box;max-width:100%;color:var(--dsw-alias-label-tertiary);font:inherit;font-variant-numeric:tabular-nums;line-height:inherit;white-space:nowrap;background:0 0;border:none;border-radius:24px;align-items:center;gap:6px;padding:1px 8px;display:inline-flex;cursor:pointer}",
 			".dshstats-pill svg{flex:none;width:14px;height:14px}",
 			".dshstats-pill:hover,.dshstats-pill[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}",
@@ -183,7 +241,21 @@ window.__ModuleLoader__.load({
 			".dshstats-details .dshstats-route{overflow-wrap:anywhere}",
 			".dshstats-details .dshstats-note{grid-column:1 / -1;color:var(--dsw-alias-label-caption);text-align:left}",
 			".dshstats-details .dshstats-sectionTitle{grid-column:1 / -1;color:var(--dsw-alias-label-caption);text-align:left}",
-			".dshstats-details .dshstats-sub{color:var(--dsw-alias-label-caption)}"
+			".dshstats-details .dshstats-sub{color:var(--dsw-alias-label-caption)}",
+			".dshstats-pill-warn{color:var(--dsw-alias-state-warn-label)}",
+			".dshstats-pill-high{color:var(--dsw-alias-state-error-primary)}",
+			".dshstats-advice{max-width:min(440px,100vw - 24px);margin-top:12px}",
+			".dshstats-advice:first-child{margin-top:0}",
+			".dshstats-adviceHead{align-items:center;gap:8px;display:flex}",
+			".dshstats-adviceTitle{color:var(--dsw-alias-label-primary);flex:1;min-width:0;font-weight:500}",
+			".dshstats-adviceBody{color:var(--dsw-alias-label-tertiary);margin:4px 0 0;overflow-wrap:anywhere}",
+			".dshstats-tag{border-radius:4px;flex:none;padding:0 4px;font-size:11px;line-height:16px}",
+			".dshstats-tag-high{background:var(--dsw-alias-state-error-tertiary);color:var(--dsw-alias-state-error-primary)}",
+			".dshstats-tag-warn{background:var(--dsw-alias-state-warn-tertiary);color:var(--dsw-alias-state-warn-primary)}",
+			".dshstats-tag-info{background:var(--dsw-alias-bg-tertiary);color:var(--dsw-alias-label-tertiary)}",
+			".dshstats-dismiss,.dshstats-restore{color:var(--dsw-alias-label-caption);cursor:pointer;background:0 0;border:none;padding:0;font:inherit}",
+			".dshstats-dismiss:hover,.dshstats-restore:hover{color:var(--dsw-alias-label-secondary);text-decoration:underline}",
+			".dshstats-restore{margin-top:12px}"
 		].join("");
 
 		const STYLE_TAG = "dsh-stats/pills.css";
@@ -313,6 +385,19 @@ window.__ModuleLoader__.load({
 
 		function countText(value, t) {
 			return t("count", { count: formatExactTokens(value, t) });
+		}
+
+		/**
+		 * Compact token count for advisory prose (the panels stay exact).
+		 * @param value - non-negative count.
+		 * @param t - locale seat.
+		 * @returns display string.
+		 */
+		function formatCompact(value, t) {
+			const scaled = (candidate) => String(candidate >= 100 ? Math.round(candidate) : Math.round(candidate * 10) / 10);
+			if (value < 1000) return String(value);
+			if (value < 1000000) return t("number.thousand", { value: scaled(value / 1000) });
+			return t("number.million", { value: scaled(value / 1000000) });
 		}
 
 		/**
@@ -458,7 +543,7 @@ window.__ModuleLoader__.load({
 		 * with a labelled section rule between groups.
 		 * @returns the portaled panel element, or null while closed.
 		 */
-		function panelOf({ open, panelRef, pos, icon, title, value, ariaLabel, sections }) {
+		function panelOf({ open, panelRef, pos, icon, title, value, ariaLabel, sections = [], children = null }) {
 			if (!open) return null;
 			const blocks = [];
 			sections.forEach((section, index) => {
@@ -483,7 +568,8 @@ window.__ModuleLoader__.load({
 						value === null || value === undefined ? null : h("span", { className: "dshstats-panelValue" }, value)
 					),
 					h("div", { className: "dshstats-panelRule", "aria-hidden": true }),
-					blocks
+					blocks,
+					children
 				),
 				document.body
 			);
@@ -687,6 +773,107 @@ window.__ModuleLoader__.load({
 			return fallback !== undefined && fallback.sessionId === sessionId ? fallback.stats : undefined;
 		}
 
+		/** The advice icon, with a fallback in case a release renames it. */
+		const ADVICE_ICON = primitives.IconLightOutline16 ?? primitives.IconDataOutline16;
+
+		/** Stable code → locale key segment (dict keys must be identifier-shaped). */
+		const ADVICE_KEYS = {
+			"context-reread": "contextReread",
+			"fragmented-tools": "fragmentedTools",
+			"repeated-target": "repeatedTarget",
+			"compaction-churn": "compactionChurn",
+			"tool-failures": "toolFailures",
+			"model-retries": "modelRetries",
+			"idle-grinding": "idleGrinding",
+			"cache-hit-drop": "cacheHitDrop",
+			"balance-low": "balanceLow"
+		};
+
+		/**
+		 * The interpolation object one advice's localized body needs. The host
+		 * sends numbers and names only; every unit and currency is formatted
+		 * here, where the locale and the formatters live.
+		 * @param code - the advice code.
+		 * @param values - the host's raw values.
+		 * @param t - locale seat.
+		 * @returns the template parameters.
+		 */
+		function adviceParams(code, values, t) {
+			switch (code) {
+				case "context-reread":
+					return {
+						percent: values.percent,
+						calls: values.calls,
+						cost: formatCny(values.costNano),
+						totalCost: formatCny(values.totalCostNano)
+					};
+				case "fragmented-tools":
+					return { tool: values.tool, calls: values.calls, fast: values.fast };
+				case "repeated-target":
+					return { tool: values.tool, target: values.target, count: values.count };
+				case "compaction-churn":
+					return {
+						count: values.count,
+						percent: values.percent,
+						cost: formatCny(values.costNano),
+						tokens: formatCompact(values.tokens, t),
+						shadowed: formatCompact(values.shadowed, t)
+					};
+				case "tool-failures":
+					return { tool: values.tool, consecutive: values.consecutive };
+				case "model-retries":
+					return { retries: values.retries };
+				case "idle-grinding":
+					return { steps: values.steps, calls: values.calls };
+				case "cache-hit-drop":
+					return { percent: values.percent, calls: values.calls };
+				case "balance-low":
+					return { balance: formatBalance(values.balance), cost: formatCny(values.costNano) };
+				default:
+					return {};
+			}
+		}
+
+		/**
+		 * The balance rule, which lives here because the balance is a live read
+		 * rather than part of the folded log.
+		 * @param stats - the session projection value.
+		 * @param balance - the balance read result.
+		 * @returns an advice item, or null.
+		 */
+		function balanceAdvice(stats, balance) {
+			if (balance === undefined || balance.ok !== true || balance.balance === undefined) return null;
+			const costNano = stats.total.costNano;
+			if (costNano <= 0) return null;
+			// Warn once the balance would cover fewer than five sessions at this
+			// burn rate, or is below a floor that is small in absolute terms.
+			if (balance.balance.total >= Math.max((costNano / NANO) * 5, 20)) return null;
+			return { code: "balance-low", severity: "warn", values: { balance: balance.balance.total, costNano } };
+		}
+
+		/** Sessions whose dismissed advice codes are remembered in this browser. */
+		const DISMISS_PREFIX = "dsh-stats.dismissed";
+
+		/** Read the advice codes dismissed for one session. */
+		function readDismissed(sessionId) {
+			try {
+				const raw = localStorage.getItem(`${DISMISS_PREFIX}.${String(sessionId)}`);
+				const parsed = raw === null ? null : JSON.parse(raw);
+				return Array.isArray(parsed) ? parsed.filter((code) => typeof code === "string") : [];
+			} catch {
+				return [];
+			}
+		}
+
+		/** Persist the advice codes dismissed for one session. */
+		function writeDismissed(sessionId, codes) {
+			try {
+				localStorage.setItem(`${DISMISS_PREFIX}.${String(sessionId)}`, JSON.stringify(codes));
+			} catch {
+				// A browser refusing storage is not a reason to break the view.
+			}
+		}
+
 		/** Marks the row as sharing the official session-stats line. */
 		const INLINE_ATTR = "data-dsh-stats-inline";
 
@@ -725,15 +912,15 @@ window.__ModuleLoader__.load({
 					unshift();
 				};
 				const official = document.querySelector("[data-composer-stats]");
-				const pill = row.firstElementChild;
-				if (official === null || pill === null || official.getBoundingClientRect().height === 0) {
+				const own = [...row.children];
+				if (official === null || own.length === 0 || official.getBoundingClientRect().height === 0) {
 					clear();
 					return;
 				}
 				const gap = Number.parseFloat(getComputedStyle(official).columnGap) || 0;
 				const children = [...official.children];
 				const content = children.reduce((total, child) => total + child.getBoundingClientRect().width, 0) + gap * Math.max(0, children.length - 1);
-				const pillWidth = pill.getBoundingClientRect().width;
+				const pillWidth = own.reduce((total, child) => total + child.getBoundingClientRect().width, 0) + gap * Math.max(0, own.length - 1);
 				// The slot wrappers between this row and the composer stack are
 				// `display: contents`, so they measure 0 — walk out to the first
 				// ancestor that actually owns the band.
@@ -800,7 +987,7 @@ window.__ModuleLoader__.load({
 		/** Hook-free gate for the session slot, same contract as {@link TurnSlot}. */
 		function SessionSlot(props) {
 			if (typeof props.useChat !== "function" || typeof props.useProjection !== "function") return null;
-			return h(SessionCostPill, props);
+			return h(SessionRow, props);
 		}
 
 		/**
@@ -810,11 +997,30 @@ window.__ModuleLoader__.load({
 		 * @param props - slot props carrying the session kit.
 		 * @returns the pill, or null until the session has billed anything.
 		 */
-		function SessionCostPill(props) {
-			const { t } = props;
-			const seat = useStatDialog();
+		/**
+		 * The whole session-stats surface: one dock row that shares the official
+		 * stats line, holding the cost + balance pill and, when there is
+		 * something worth saying, the advice pill. The row owns the placement,
+		 * so both pills are measured as one group.
+		 */
+		function SessionRow(props) {
+			const rowRef = react.useRef(null);
 			const stats = useSessionStats(props);
-			useInlineWithStats(seat.rootRef);
+			const balance = useBalance();
+			useInlineWithStats(rowRef);
+			if (stats === undefined || stats.total === undefined) return null;
+			if (totalTokensOf(stats.total) === 0) return null;
+			const shared = { ...props, stats, balance };
+			return h(
+				"span",
+				{ ref: rowRef, className: "dshstats-row", "data-dsh-stats-session": true },
+				h(SessionCostPill, shared),
+				h(AdvicePill, shared)
+			);
+		}
+
+		/** The live account read, lifted so both pills (and the panel) share one fetch. */
+		function useBalance() {
 			const [balance, setBalance] = react.useState(undefined);
 			const refresh = react.useCallback(() => {
 				let live = true;
@@ -826,34 +1032,57 @@ window.__ModuleLoader__.load({
 				};
 			}, []);
 			react.useEffect(() => refresh(), [refresh]);
+			return { value: balance, refresh };
+		}
+
+		function SessionCostPill(props) {
+			const { t, stats, balance } = props;
+			const seat = useStatDialog();
 			react.useEffect(() => {
 				if (!seat.open) return undefined;
-				return refresh();
-			}, [seat.open, refresh]);
-			if (stats === undefined || stats.total === undefined) return null;
+				return balance.refresh();
+			}, [seat.open, balance]);
 			const bucket = stats.total;
-			if (totalTokensOf(bucket) === 0) return null;
 			const cost = formatCny(bucket.costNano);
-			const balanceLabel = balanceText(balance, t);
-			const loaded = balance !== undefined && balance.ok === true;
+			const balanceLabel = balanceText(balance.value, t);
+			const loaded = balance.value !== undefined && balance.value.ok === true;
 			const sections = [{ rows: bucketDetails(bucket, t, "session", t("session.cost")) }];
+			if (bucket.cacheReadCostNano !== undefined) {
+				sections[0].rows = sections[0].rows.concat([
+					h(Detail, {
+						key: "cacheReadCost",
+						label: t("session.cacheReadCost"),
+						children: formatCny(bucket.cacheReadCostNano, true)
+					})
+				]);
+			}
+			if (stats.compaction !== undefined && stats.compaction.summaryCostNano > 0) {
+				sections[0].rows = sections[0].rows.concat([
+					h(Detail, {
+						key: "compactionCost",
+						label: t("session.compaction"),
+						children: t("session.compactionValue", { cost: formatCny(stats.compaction.summaryCostNano, true), count: stats.compaction.count })
+					})
+				]);
+			}
 			if (stats.timing !== undefined) sections.push({ title: t("timing.title"), rows: timingRows(stats.timing.total, t) });
 			sections.push({
 				title: t("session.balance"),
 				rows: loaded
 					? [
-							h(Detail, { key: "total", label: t("balance.total"), children: formatBalance(balance.balance.total) }),
-							h(Detail, { key: "granted", label: t("balance.granted"), children: formatBalance(balance.balance.granted) }),
-							h(Detail, { key: "toppedUp", label: t("balance.toppedUp"), children: formatBalance(balance.balance.toppedUp) })
+							h(Detail, { key: "total", label: t("balance.total"), children: formatBalance(balance.value.balance.total) }),
+							h(Detail, { key: "granted", label: t("balance.granted"), children: formatBalance(balance.value.balance.granted) }),
+							h(Detail, { key: "toppedUp", label: t("balance.toppedUp"), children: formatBalance(balance.value.balance.toppedUp) })
 						]
 					: [h(Detail, { key: "state", label: t("session.balance"), children: balanceLabel })]
 			});
 			return h(
 				"span",
-				{ ref: seat.rootRef, className: "dshstats-row", "data-dsh-stats-session": true },
+				{ className: "dshstats-anchor" },
 				h(
 					"button",
 					{
+						ref: seat.rootRef,
 						type: "button",
 						className: "dshstats-pill",
 						"aria-haspopup": "dialog",
@@ -881,6 +1110,89 @@ window.__ModuleLoader__.load({
 					value: countText(totalTokensOf(bucket), t),
 					ariaLabel: t("session.title"),
 					sections
+				})
+			);
+		}
+
+		/**
+		 * The advice pill: it exists only while there is something to say, so a
+		 * healthy session pays no space for it. Advice is dismissed per session
+		 * and remembered in this browser.
+		 */
+		function AdvicePill(props) {
+			const { t, stats, sessionId, balance } = props;
+			const seat = useStatDialog();
+			const [dismissed, setDismissed] = react.useState(() => readDismissed(sessionId));
+			const fromLog = Array.isArray(stats.advice) ? stats.advice : [];
+			const low = balanceAdvice(stats, balance.value);
+			const all = low === null ? fromLog : fromLog.concat([low]);
+			const live = all.filter((item) => !dismissed.includes(item.code));
+			if (live.length === 0) return null;
+			const dismiss = (code) => {
+				const next = dismissed.includes(code) ? dismissed : dismissed.concat([code]);
+				setDismissed(next);
+				writeDismissed(sessionId, next);
+			};
+			const restore = () => {
+				setDismissed([]);
+				writeDismissed(sessionId, []);
+			};
+			const worst = live.some((item) => item.severity === "high") ? "high" : live.some((item) => item.severity === "warn") ? "warn" : "info";
+			const items = live.map((item) =>
+				h(
+					"div",
+					{ key: item.code, className: "dshstats-advice" },
+					h(
+						"div",
+						{ className: "dshstats-adviceHead" },
+						h("span", { className: `dshstats-tag dshstats-tag-${item.severity}` }, t(`advice.${item.severity}`)),
+						h("span", { className: "dshstats-adviceTitle" }, t(`advice.${ADVICE_KEYS[item.code] ?? "info"}.title`)),
+						h(
+							"button",
+							{ type: "button", className: "dshstats-dismiss", onClick: () => dismiss(item.code) },
+							t("advice.dismiss")
+						)
+					),
+					h("p", { className: "dshstats-adviceBody" }, t(`advice.${ADVICE_KEYS[item.code] ?? "info"}.body`, adviceParams(item.code, item.values, t)))
+				)
+			);
+			if (dismissed.length > 0) {
+				items.push(
+					h(
+						"button",
+						{ key: "restore", type: "button", className: "dshstats-restore", onClick: restore },
+						t("advice.restore")
+					)
+				);
+			}
+			return h(
+				"span",
+				{ className: "dshstats-anchor" },
+				h(
+					"button",
+					{
+						ref: seat.rootRef,
+						type: "button",
+						className: `dshstats-pill dshstats-pill-${worst}`,
+						"aria-haspopup": "dialog",
+						"aria-expanded": seat.open,
+						"aria-label": t("advice.title"),
+						onClick: () => {
+							seat.setOpen(!seat.open);
+						}
+					},
+					h(ADVICE_ICON, null),
+					h("span", { className: "dshstats-label" }, t("advice.pill", { count: live.length }))
+				),
+				panelOf({
+					open: seat.open,
+					panelRef: seat.panelRef,
+					pos: seat.pos,
+					icon: h(ADVICE_ICON, null),
+					title: t("advice.title"),
+					value: t("advice.pill", { count: live.length }),
+					ariaLabel: t("advice.title"),
+					children: items
 				})
 			);
 		}
