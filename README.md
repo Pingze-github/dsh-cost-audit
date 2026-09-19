@@ -24,17 +24,36 @@ the branch button, next to the official "consumed" and "ran for" pills. It shows
 | Total input | 总输入 tokens over the three disjoint prompt buckets |
 | Output | 输出 tokens, reasoning included |
 | Turn cost | 本轮费用, CNY |
+| **Timing** | 本轮耗时分布 — see below |
 
-**Per session** — a pill under the official session stats row. It shows
-`¥1.46 · Account balance ¥21.99` and opens the same breakdown for the whole
-durable log, plus 账户余额 read live from the DeepSeek billing API:
+**Per session** — a pill on the **same line** as the official session stats
+(`1 turns 297 steps · 237 tok/s · 73.2M tok · Cache hit 99.7%`), immediately to
+their right: `¥2.72 · Account balance ¥113.45`. It opens the same breakdown for
+the whole durable log, plus the timing section and 账户余额 read live from the
+DeepSeek billing API:
 
 | Row | Meaning |
 | --- | --- |
 | Session cost | 会话总费用, CNY |
 | Cache hit / read / uncached / cache write / total input / output | whole-session token buckets |
+| **Timing** | 会话耗时分布 — see below |
 | Account balance | 总余额, live |
 | Granted / Topped up | 赠送余额 and 充值余额 |
+
+### Timing breakdown (耗时分布)
+
+Both panels end their usage section with where the time actually went, and the
+tool rows rank their own tool names:
+
+| Row | Meaning |
+| --- | --- |
+| Total wall | 总耗时 — `turn/start` → `turn/end` |
+| LLM time | 模型用时 — `step/start` → `assistant/message`, with the call count |
+| Avg time to first token (TTFT) | 首 token 平均 — `step/start` → first output token |
+| Generation | 模型生成 — first token → settlement, with tok/s |
+| Tool time | 工具调用用时 — `tool/call` → `tool/result`, with the call count |
+| Other overhead | 其他开销 — wall time the two above do not account for |
+| By tool | 工具明细 — the busiest 6 tool names, then one row for the tail |
 
 The interface follows the harness locale: Simplified Chinese under `zh`, English
 under `en`.
@@ -110,6 +129,13 @@ browser page** to pick up the new client bundle.
   It carries no build step: it is a hand-written bundle in the
   `window.__ModuleLoader__.load({ id, factory })` form, so the package installs
   straight from a checkout.
+- **Session-row placement** is measured, not hard-coded. The composer dock
+  stacks its slot entries and the official stats row is a centred flex row this
+  plugin does not own, so the row is lifted by the official row's measured
+  height and its content indented to start where the official content ends.
+  A longer official label, a changed font size, or a resized window all land in
+  the right place; when the pill would not fit beside the official pills, the
+  row falls back to a centred line of its own instead of overlapping them.
 
 ## Layout
 

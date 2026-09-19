@@ -76,7 +76,20 @@ window.__ModuleLoader__.load({
 			"balance.loading": "读取中…",
 			"balance.error": "读取失败",
 			"balance.noKey": "未配置 API Key",
-			"cost.unpriced": "另有 {count} 未收录价格，未计入费用"
+			"cost.unpriced": "另有 {count} 未收录价格，未计入费用",
+			"timing.title": "耗时分布",
+			"timing.wall": "总耗时",
+			"timing.model": "模型用时",
+			"timing.ttft": "首 token 平均（TTFT）",
+			"timing.decode": "模型生成",
+			"timing.tool": "工具调用用时",
+			"timing.other": "其他开销",
+			"timing.byTool": "工具明细",
+			"timing.more": "其余 {count} 个工具",
+			"timing.calls": "{count} 次",
+			"duration.seconds": "{seconds}秒",
+			"duration.minutes": "{minutes}分{seconds}秒",
+			"tps": "{tps} tok/s"
 		};
 
 		const DICT_EN = {
@@ -110,7 +123,20 @@ window.__ModuleLoader__.load({
 			"balance.loading": "Loading…",
 			"balance.error": "Unavailable",
 			"balance.noKey": "No API key configured",
-			"cost.unpriced": "{count} further tokens have no listed price and are not billed here"
+			"cost.unpriced": "{count} further tokens have no listed price and are not billed here",
+			"timing.title": "Timing",
+			"timing.wall": "Total wall",
+			"timing.model": "LLM time",
+			"timing.ttft": "Avg time to first token (TTFT)",
+			"timing.decode": "Generation",
+			"timing.tool": "Tool time",
+			"timing.other": "Other overhead",
+			"timing.byTool": "By tool",
+			"timing.more": "{count} more tools",
+			"timing.calls": "{count} calls",
+			"duration.seconds": "{seconds}s",
+			"duration.minutes": "{minutes}m {seconds}s",
+			"tps": "{tps} tok/s"
 		};
 
 		//#endregion
@@ -130,7 +156,13 @@ window.__ModuleLoader__.load({
 			".dshstats-trigger svg{width:calc(15px + var(--dsh-content-font-delta,0px));height:calc(15px + var(--dsh-content-font-delta,0px));flex:none}",
 			".dshstats-trigger:hover,.dshstats-trigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}",
 			".dshstats-label{text-overflow:ellipsis;min-width:0;overflow:hidden}",
-			".dshstats-row{max-width:var(--dsh-chat-content-width);box-sizing:border-box;width:100%;padding:2px calc(var(--dsh-composer-side-clearance) + 16px) 0;font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));justify-content:center;gap:12px;margin:0 auto;display:flex}",
+			".dshstats-row{max-width:var(--dsh-chat-content-width);box-sizing:border-box;width:100%;padding:2px calc(var(--dsh-composer-side-clearance) + 16px) 0;font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));justify-content:center;align-items:center;gap:12px;margin:0 auto;display:flex}",
+			// Sharing the official session-stats line: the row is lifted by the
+			// official row's measured height and its content indented past the
+			// official pills. `pointer-events` keeps the official pills clickable
+			// underneath the lifted row.
+			".dshstats-row[data-dsh-stats-inline]{max-width:none;height:var(--dshstats-lift,auto);margin:calc(-1 * var(--dshstats-lift,0px)) 0 0;padding:0 0 0 var(--dshstats-indent,0px);justify-content:flex-start;pointer-events:none}",
+			".dshstats-row[data-dsh-stats-inline]>*{pointer-events:auto}",
 			".dshstats-pill{box-sizing:border-box;max-width:100%;color:var(--dsw-alias-label-tertiary);font:inherit;font-variant-numeric:tabular-nums;line-height:inherit;white-space:nowrap;background:0 0;border:none;border-radius:24px;align-items:center;gap:6px;padding:1px 8px;display:inline-flex;cursor:pointer}",
 			".dshstats-pill svg{flex:none;width:14px;height:14px}",
 			".dshstats-pill:hover,.dshstats-pill[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}",
@@ -146,7 +178,9 @@ window.__ModuleLoader__.load({
 			".dshstats-details dt,.dshstats-details dd{min-width:0;margin:0}",
 			".dshstats-details dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
 			".dshstats-details .dshstats-route{overflow-wrap:anywhere}",
-			".dshstats-details .dshstats-note{grid-column:1 / -1;color:var(--dsw-alias-label-caption);text-align:left}"
+			".dshstats-details .dshstats-note{grid-column:1 / -1;color:var(--dsw-alias-label-caption);text-align:left}",
+			".dshstats-details .dshstats-sectionTitle{grid-column:1 / -1;color:var(--dsw-alias-label-caption);text-align:left}",
+			".dshstats-details .dshstats-sub{color:var(--dsw-alias-label-caption)}"
 		].join("");
 
 		const STYLE_TAG = "dsh-stats/pills.css";
@@ -278,6 +312,74 @@ window.__ModuleLoader__.load({
 			return t("count", { count: formatExactTokens(value, t) });
 		}
 
+		/**
+		 * Compact duration, using the harness's own vocabulary: 45.2秒 under a
+		 * minute, 2分42秒 from there on.
+		 * @param ms - duration in milliseconds.
+		 * @param t - locale seat.
+		 * @returns display string.
+		 */
+		function formatDuration(ms, t) {
+			const seconds = ms / 1000;
+			if (seconds < 60) return t("duration.seconds", { seconds: Math.round(seconds * 10) / 10 });
+			const whole = Math.round(seconds);
+			return t("duration.minutes", { minutes: Math.floor(whole / 60), seconds: whole % 60 });
+		}
+
+		/** Duration plus a call count: `3分20秒 · 37 次`. */
+		function durationWithCount(ms, count, t) {
+			return `${formatDuration(ms, t)} · ${t("timing.calls", { count })}`;
+		}
+
+		/** How many tool names the panel ranks before summarising the tail. */
+		const TOOL_ROWS = 6;
+
+		/**
+		 * The operation-type timing rows: wall time, model wait, generation, and
+		 * tool execution ranked by tool name.
+		 * @param timing - one timing bucket from the projection.
+		 * @param t - locale seat.
+		 * @returns an array of detail elements.
+		 */
+		function timingRows(timing, t) {
+			const rows = [
+				h(Detail, { key: "wall", label: t("timing.wall"), children: formatDuration(timing.wallMs, t) }),
+				h(Detail, { key: "model", label: t("timing.model"), children: durationWithCount(timing.modelMs, timing.modelCalls, t) })
+			];
+			if (timing.ttftSteps > 0) {
+				rows.push(h(Detail, { key: "ttft", label: t("timing.ttft"), children: formatDuration(timing.ttftMs / timing.ttftSteps, t) }));
+			}
+			if (timing.decodeMs > 0) {
+				const tps = timing.decodeTokens / (timing.decodeMs / 1000);
+				rows.push(
+					h(Detail, {
+						key: "decode",
+						label: t("timing.decode"),
+						children: `${formatDuration(timing.decodeMs, t)} · ${t("tps", { tps: Math.round(tps * 10) / 10 })}`
+					})
+				);
+			}
+			rows.push(h(Detail, { key: "tool", label: t("timing.tool"), children: durationWithCount(timing.toolMs, timing.toolCalls, t) }));
+			// Sub-100ms remainders are measurement noise, not a line worth reading.
+			const other = timing.wallMs - timing.modelMs - timing.toolMs;
+			if (other >= 100) {
+				rows.push(h(Detail, { key: "other", label: t("timing.other"), children: formatDuration(other, t) }));
+			}
+			const ranked = Object.entries(timing.tools).sort((left, right) => right[1].ms - left[1].ms);
+			if (ranked.length > 0) {
+				rows.push(h("dd", { key: "byTool", className: "dshstats-sectionTitle" }, t("timing.byTool")));
+				for (const [name, tool] of ranked.slice(0, TOOL_ROWS)) {
+					rows.push(h(Detail, { key: `tool:${name}`, label: name, children: durationWithCount(tool.ms, tool.calls, t), className: "dshstats-route" }));
+				}
+				if (ranked.length > TOOL_ROWS) {
+					const rest = ranked.slice(TOOL_ROWS);
+					const ms = rest.reduce((total, entry) => total + entry[1].ms, 0);
+					rows.push(h(Detail, { key: "toolRest", label: t("timing.more", { count: rest.length }), children: formatDuration(ms, t) }));
+				}
+			}
+			return rows;
+		}
+
 		//#endregion
 
 		//#region dialog seat
@@ -348,13 +450,25 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * The panel chrome shared by both pills: title row, hairline rule, and
-		 * the `dl` carrying the details — plus an optional `footer` element
-		 * (used by the session panel for the balance section).
+		 * The panel chrome shared by both pills: title row, hairline rule, then
+		 * one `dl` per section — the harness's own dialog geometry, extended
+		 * with a labelled section rule between groups.
 		 * @returns the portaled panel element, or null while closed.
 		 */
-		function panelOf({ open, panelRef, pos, icon, title, value, details, ariaLabel, footer }) {
+		function panelOf({ open, panelRef, pos, icon, title, value, ariaLabel, sections }) {
 			if (!open) return null;
+			const blocks = [];
+			sections.forEach((section, index) => {
+				if (index > 0) blocks.push(h("div", { key: `rule:${String(index)}`, className: "dshstats-sectionRule", "aria-hidden": true }));
+				blocks.push(
+					h(
+						"dl",
+						{ key: `section:${String(index)}`, className: "dshstats-details" },
+						section.title === undefined ? null : h("dd", { className: "dshstats-sectionTitle" }, section.title),
+						section.rows
+					)
+				);
+			});
 			return reactDom.createPortal(
 				h(
 					"div",
@@ -366,8 +480,7 @@ window.__ModuleLoader__.load({
 						value === null || value === undefined ? null : h("span", { className: "dshstats-panelValue" }, value)
 					),
 					h("div", { className: "dshstats-panelRule", "aria-hidden": true }),
-					h("dl", { className: "dshstats-details" }, details),
-					footer === undefined ? null : footer
+					blocks
 				),
 				document.body
 			);
@@ -435,8 +548,11 @@ window.__ModuleLoader__.load({
 					icon: h(primitives.IconDataOutline16, null),
 					title: t("turn.title"),
 					value: countText(totalTokensOf(bucket), t),
-					details,
-					ariaLabel: t("turn.title")
+					ariaLabel: t("turn.title"),
+					sections: [
+						{ rows: details },
+						timingOf(stats, turn) === undefined ? null : { title: t("timing.title"), rows: timingRows(timingOf(stats, turn), t) }
+					].filter(Boolean)
 				})
 			);
 		}
@@ -457,6 +573,16 @@ window.__ModuleLoader__.load({
 				}
 			} catch {}
 			return undefined;
+		}
+
+		/**
+		 * The timing bucket of one turn, or undefined when the fold never saw it.
+		 * @param stats - the session's projection value.
+		 * @param turn - the turn number.
+		 * @returns the timing bucket.
+		 */
+		function timingOf(stats, turn) {
+			return stats.timing === undefined ? undefined : stats.timing.turns[String(turn)];
 		}
 
 		//#endregion
@@ -558,6 +684,74 @@ window.__ModuleLoader__.load({
 			return fallback !== undefined && fallback.sessionId === sessionId ? fallback.stats : undefined;
 		}
 
+		/** Marks the row as sharing the official session-stats line. */
+		const INLINE_ATTR = "data-dsh-stats-inline";
+
+		/**
+		 * Share the official session-stats line.
+		 *
+		 * The composer dock stacks its slot entries, and the official stats row
+		 * is a centred flex row this plugin does not own. Sharing its line means
+		 * lifting this row by the official row's *measured* height and indenting
+		 * its content to start where the official content ends — measured too,
+		 * so a longer official label, a changed font size, or a resized window
+		 * all land in the right place. When the pill would not fit beside the
+		 * official pills, the row stays a centred line of its own instead of
+		 * overlapping them.
+		 * @param rowRef - ref on the row being placed.
+		 */
+		function useInlineWithStats(rowRef) {
+			const place = react.useCallback(() => {
+				const row = rowRef.current;
+				if (row === null) return;
+				const official = document.querySelector("[data-composer-stats]");
+				const pill = row.firstElementChild;
+				const clear = () => {
+					row.removeAttribute(INLINE_ATTR);
+					row.style.removeProperty("--dshstats-lift");
+					row.style.removeProperty("--dshstats-indent");
+				};
+				if (official === null || pill === null || official.getBoundingClientRect().height === 0) {
+					clear();
+					return;
+				}
+				const gap = Number.parseFloat(getComputedStyle(official).columnGap) || 0;
+				const children = [...official.children];
+				const content = children.reduce((total, child) => total + child.getBoundingClientRect().width, 0) + gap * Math.max(0, children.length - 1);
+				// The slot wrappers between this row and the composer stack are
+				// `display: contents`, so they measure 0 — walk out to the first
+				// ancestor that actually owns the band.
+				let band = row.parentElement;
+				while (band !== null && band.getBoundingClientRect().width === 0) band = band.parentElement;
+				const halfBand = (band === null ? row.getBoundingClientRect().width : band.getBoundingClientRect().width) / 2;
+				if (content / 2 + gap + pill.getBoundingClientRect().width > halfBand - 4) {
+					clear();
+					return;
+				}
+				row.setAttribute(INLINE_ATTR, "");
+				const lift = `${official.getBoundingClientRect().height}px`;
+				// `50%` is this row's own centre, which is the official row's
+				// centre too — the two rows are centred in the same band.
+				const indent = `calc(50% + ${content / 2 + gap}px)`;
+				if (row.style.getPropertyValue("--dshstats-lift") !== lift) row.style.setProperty("--dshstats-lift", lift);
+				if (row.style.getPropertyValue("--dshstats-indent") !== indent) row.style.setProperty("--dshstats-indent", indent);
+			}, [rowRef]);
+			react.useLayoutEffect(place);
+			react.useEffect(() => {
+				window.addEventListener("resize", place);
+				// The official stats row mounts on its own schedule and its labels
+				// change as the session runs, so placement cannot rely on this
+				// component rendering again.
+				const parent = rowRef.current?.parentElement ?? null;
+				const observer = parent === null ? null : new MutationObserver(place);
+				observer?.observe(parent, { childList: true, subtree: true, characterData: true });
+				return () => {
+					window.removeEventListener("resize", place);
+					observer?.disconnect();
+				};
+			}, [place, rowRef]);
+		}
+
 		/** CNY text for one DeepSeek balance figure. */
 		function formatBalance(amount) {
 			const value = Number(amount);
@@ -593,6 +787,7 @@ window.__ModuleLoader__.load({
 			const { t } = props;
 			const seat = useStatDialog();
 			const stats = useSessionStats(props);
+			useInlineWithStats(seat.rootRef);
 			const [balance, setBalance] = react.useState(undefined);
 			const refresh = react.useCallback(() => {
 				let live = true;
@@ -614,22 +809,18 @@ window.__ModuleLoader__.load({
 			const cost = formatCny(bucket.costNano);
 			const balanceLabel = balanceText(balance, t);
 			const loaded = balance !== undefined && balance.ok === true;
-			const balanceFooter = h(
-				Fragment,
-				null,
-				h("div", { className: "dshstats-sectionRule", "aria-hidden": true }),
-				h(
-					"dl",
-					{ className: "dshstats-details" },
-					h(Detail, { key: "head", label: t("session.balance"), children: balanceLabel }),
-					loaded
-						? [
-								h(Detail, { key: "granted", label: t("balance.granted"), children: formatBalance(balance.balance.granted) }),
-								h(Detail, { key: "toppedUp", label: t("balance.toppedUp"), children: formatBalance(balance.balance.toppedUp) })
-							]
-						: null
-				)
-			);
+			const sections = [{ rows: bucketDetails(bucket, t, "session", t("session.cost")) }];
+			if (stats.timing !== undefined) sections.push({ title: t("timing.title"), rows: timingRows(stats.timing.total, t) });
+			sections.push({
+				title: t("session.balance"),
+				rows: loaded
+					? [
+							h(Detail, { key: "total", label: t("balance.total"), children: formatBalance(balance.balance.total) }),
+							h(Detail, { key: "granted", label: t("balance.granted"), children: formatBalance(balance.balance.granted) }),
+							h(Detail, { key: "toppedUp", label: t("balance.toppedUp"), children: formatBalance(balance.balance.toppedUp) })
+						]
+					: [h(Detail, { key: "state", label: t("session.balance"), children: balanceLabel })]
+			});
 			return h(
 				"span",
 				{ ref: seat.rootRef, className: "dshstats-row", "data-dsh-stats-session": true },
@@ -661,9 +852,8 @@ window.__ModuleLoader__.load({
 					icon: h(primitives.IconDataOutline16, null),
 					title: t("session.title"),
 					value: countText(totalTokensOf(bucket), t),
-					details: bucketDetails(bucket, t, "session", t("session.cost")),
 					ariaLabel: t("session.title"),
-					footer: balanceFooter
+					sections
 				})
 			);
 		}

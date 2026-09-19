@@ -27,7 +27,36 @@ export interface DshStatsTurn extends DshStatsBucket {
 	model: string;
 }
 
-/** The `dshStats` client view: whole-log tokens and CNY cost. */
+/** One tool's own call count and wall time. */
+export interface DshStatsToolTiming {
+	calls: number;
+	ms: number;
+}
+
+/**
+ * Operation-type timings for one turn, or for the whole session. Durations are
+ * milliseconds; `wallMs` brackets the turn (`turn/start` → `turn/end`), so
+ * `wallMs - modelMs - toolMs` is harness overhead.
+ */
+export interface DshStatsTiming {
+	wallMs: number;
+	/** step/start → assistant/message: model wait plus generation. */
+	modelMs: number;
+	modelCalls: number;
+	/** step/start → first output token. */
+	ttftMs: number;
+	ttftSteps: number;
+	/** first output token → assistant/message. */
+	decodeMs: number;
+	decodeTokens: number;
+	/** tool/call → its tool/result, matched by callId. */
+	toolMs: number;
+	toolCalls: number;
+	/** Tool name → its own calls and wall time. */
+	tools: Record<string, DshStatsToolTiming>;
+}
+
+/** The `dshStats` client view: whole-log tokens, CNY cost, and timings. */
 export interface DshStatsProjection {
 	/** Always `CNY` — DeepSeek's list prices are published in RMB. */
 	currency: "CNY";
@@ -39,6 +68,8 @@ export interface DshStatsProjection {
 	total: DshStatsBucket;
 	/** Turn number (decimal string) → that turn's billed totals. */
 	turns: Record<string, DshStatsTurn>;
+	/** Operation-type timings, per turn and for the whole session. */
+	timing: { total: DshStatsTiming; turns: Record<string, DshStatsTiming> };
 }
 
 /** The `/api/dsh-stats.balance` answer for an account read. */
@@ -51,7 +82,7 @@ export type DshStatsSessionResult = { ok: true; stats: DshStatsProjection } | { 
 
 declare module "@deepseek-ai/dsh-session-projection/types" {
 	interface SessionProjectionMap {
-		/** Whole-log billed tokens and CNY cost, per turn and per session. */
+		/** Whole-log billed tokens, CNY cost, and operation timings. */
 		dshStats: DshStatsProjection;
 	}
 }

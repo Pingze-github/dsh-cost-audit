@@ -388,11 +388,82 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 {
 	// Uninteresting events must not move the state reference.
 	const state = unit.init({}, 0);
-	for (const type of ["turn/start", "step/start", "step/end", "turn/end", "system/message", "tool/call"]) {
-		const event = { type, seq: 1, time: PEAK, data: {}, __uninteresting: true };
-		assert.equal(unit.apply(state, event), state, `${type} must be ignored`);
+	const inert = [
+		{ type: "system/message", data: {} },
+		{ type: "user/message", data: {} },
+		{ type: "step/end", data: { turn: 1, step: 1 } },
+		{ type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } },
+		{ type: "tool/result", data: { turn: 1, step: 1, message: { source: { callId: "unknown" } } } },
+		{ type: "llm/retry-started", data: { turn: 9, step: 9 } }
+	];
+	for (const { type, data } of inert) {
+		assert.equal(unit.apply(state, { type, seq: 1, time: PEAK, data }), state, `${type} must be ignored`);
 	}
+	const routed = unit.apply(state, route("deepseek-flash"));
+	assert.equal(unit.apply(routed, route("deepseek-flash")), routed, "an unchanged route report is ignored");
 }
+
+//#region timing
+
+{
+	// One turn: 1s to dispatch, first token 0.5s later, a 3.5s generation, a
+	// 3s tool call, and a 10s turn.
+	const T0 = PEAK;
+	const stream = (time) => [{ type: "chunk", time, chunk: { type: "text-delta", text: "x" } }];
+	const { view } = fold([
+		route("deepseek-flash"),
+		{ type: "turn/start", seq: 1, time: T0, data: { turn: 1 } },
+		{ type: "step/start", seq: 2, time: T0 + 1000, data: { turn: 1, step: 1 } },
+		{ type: "assistant/attempt", seq: 3, time: T0 + 4000, data: { turn: 1, step: 1, stream: stream(T0 + 1500) } },
+		{ type: "assistant/message", seq: 4, time: T0 + 5000, data: { turn: 1, step: 1, usage: { inputTokens: 10, outputTokens: 100 }, stream: stream(T0 + 1500) } },
+		{ type: "tool/call", seq: 5, time: T0 + 6000, data: { turn: 1, step: 1, callId: "c1", name: "bash", arguments: "{}" } },
+		{ type: "tool/result", seq: 6, time: T0 + 9000, data: { turn: 1, step: 1, message: { source: { callId: "c1" } } } },
+		{ type: "step/end", seq: 7, time: T0 + 9000, data: { turn: 1, step: 1 } },
+		{ type: "turn/end", seq: 8, time: T0 + 10000, data: { turn: 1, reason: { kind: "completed" } } }
+	]);
+	const timing = view.timing.total;
+	assert.equal(timing.wallMs, 10000, "turn wall time");
+	assert.equal(timing.modelMs, 4000, "model wall time");
+	assert.equal(timing.modelCalls, 1, "model call count");
+	assert.equal(timing.ttftMs, 500, "first-token wait");
+	assert.equal(timing.decodeMs, 3500, "decode span");
+	assert.equal(timing.decodeTokens, 100, "decode tokens");
+	assert.equal(timing.toolMs, 3000, "tool wall time");
+	assert.equal(timing.toolCalls, 1, "tool call count");
+	assert.deepEqual(timing.tools, { bash: { calls: 1, ms: 3000 } }, "tool ranking");
+	assert.deepEqual(view.timing.turns["1"], timing, "the turn carries the same timings");
+}
+
+{
+	// A tool call with no result yet leaves the total alone, and a turn that
+	// never opened a step still records its wall time.
+	const T0 = PEAK;
+	const { view } = fold([
+		{ type: "turn/start", seq: 1, time: T0, data: { turn: 3 } },
+		{ type: "tool/call", seq: 2, time: T0 + 100, data: { turn: 3, step: 1, callId: "c9", name: "read", arguments: "{}" } },
+		{ type: "turn/end", seq: 3, time: T0 + 2000, data: { turn: 3, reason: { kind: "cancelled" } } }
+	]);
+	assert.equal(view.timing.total.toolMs, 0, "an unanswered tool call bills no time");
+	assert.equal(view.timing.total.wallMs, 2000, "the turn's wall time is recorded");
+}
+
+{
+	// Two tool calls under one name accumulate into one ranking entry.
+	const T0 = PEAK;
+	const call = (seq, id, at) => [
+		{ type: "tool/call", seq, time: T0 + at, data: { turn: 1, step: 1, callId: id, name: "grep", arguments: "{}" } },
+		{ type: "tool/result", seq: seq + 1, time: T0 + at + 500, data: { turn: 1, step: 1, message: { source: { callId: id } } } }
+	];
+	const { view } = fold([
+		{ type: "turn/start", seq: 1, time: T0, data: { turn: 1 } },
+		...call(2, "a", 1000),
+		...call(4, "b", 3000)
+	]);
+	assert.deepEqual(view.timing.total.tools, { grep: { calls: 2, ms: 1000 } }, "same-name tool calls accumulate");
+	assert.equal(view.timing.total.toolCalls, 2, "both calls counted");
+}
+
+//#endregion
 
 {
 	// The view memo must hand back one reference until the state changes.
@@ -427,4 +498,4 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 
 //#endregion
 
-process.stdout.write(`check: dsh-stats host half OK (${registrations.length} projection unit, ${routes.length} balance routes)\n`);
+process.stdout.write(`check: dsh-stats host half OK (${registrations.length} projection units, ${routes.length} balance routes)\n`);

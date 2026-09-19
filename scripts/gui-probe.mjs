@@ -63,7 +63,7 @@ let chromium = spawn(
 		"--disable-dev-shm-usage",
 		`--user-data-dir=${profileDir}`,
 		`--remote-debugging-port=${port}`,
-		"--window-size=1500,1400",
+		`--window-size=${arg("--size", "1500,1400")}`,
 		"about:blank"
 	],
 	{ stdio: ["ignore", "ignore", "ignore"] }

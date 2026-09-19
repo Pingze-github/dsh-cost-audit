@@ -23,7 +23,7 @@
  */
 
 import { z } from "zod";
-import { lastAssistantStreamChunk } from "@deepseek-ai/dsh-llm/assistant-stream";
+import { assistantStreamFirstTokenTime, lastAssistantStreamChunk } from "@deepseek-ai/dsh-llm/assistant-stream";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 
 export const name = "dsh-stats";
@@ -156,6 +156,110 @@ const bucketShape = {
 const bucketSchema = z.object(bucketShape).strict();
 
 /**
+ * One operation-type timing bucket, kept per turn and for the whole session.
+ * Durations are milliseconds; `tools` ranks tool wall time by tool name, which
+ * is what answers "where did this turn actually go".
+ */
+const timingShape = {
+  /** turn/start → turn/end. */
+  wallMs: z.number().nonnegative(),
+  /** step/start → assistant/message: model wait plus generation. */
+  modelMs: z.number().nonnegative(),
+  modelCalls: z.number().int().nonnegative(),
+  /** step/start → first output token. */
+  ttftMs: z.number().nonnegative(),
+  ttftSteps: z.number().int().nonnegative(),
+  /** first output token → assistant/message. */
+  decodeMs: z.number().nonnegative(),
+  decodeTokens: z.number().nonnegative(),
+  /** tool/call → its tool/result, matched by callId. */
+  toolMs: z.number().nonnegative(),
+  toolCalls: z.number().int().nonnegative(),
+  tools: z.record(z.string(), z.object({ calls: z.number().int().nonnegative(), ms: z.number().nonnegative() }).strict()),
+};
+
+const timingSchema = z.object(timingShape).strict();
+
+/** The timing half of the wire view: totals plus per-turn buckets. */
+const timingViewSchema = z.object({ total: timingSchema, turns: z.record(z.string(), timingSchema) }).strict();
+
+const ZERO_TIMING = Object.freeze({
+  wallMs: 0,
+  modelMs: 0,
+  modelCalls: 0,
+  ttftMs: 0,
+  ttftSteps: 0,
+  decodeMs: 0,
+  decodeTokens: 0,
+  toolMs: 0,
+  toolCalls: 0,
+  tools: Object.freeze({}),
+});
+
+/**
+ * Add one timing delta. An absent delta field is zero, so a caller names only
+ * what it measured and never restates the bucket's shape.
+ * @param left - the accumulated bucket.
+ * @param delta - the measurement to fold in.
+ * @returns a new bucket.
+ */
+function addTiming(left, delta) {
+  const entries = Object.entries(delta.tools ?? {});
+  const tools = entries.length === 0 ? left.tools : { ...left.tools };
+  for (const [name, add] of entries) {
+    const current = tools[name] ?? { calls: 0, ms: 0 };
+    tools[name] = { calls: current.calls + add.calls, ms: current.ms + add.ms };
+  }
+  return {
+    wallMs: left.wallMs + (delta.wallMs ?? 0),
+    modelMs: left.modelMs + (delta.modelMs ?? 0),
+    modelCalls: left.modelCalls + (delta.modelCalls ?? 0),
+    ttftMs: left.ttftMs + (delta.ttftMs ?? 0),
+    ttftSteps: left.ttftSteps + (delta.ttftSteps ?? 0),
+    decodeMs: left.decodeMs + (delta.decodeMs ?? 0),
+    decodeTokens: left.decodeTokens + (delta.decodeTokens ?? 0),
+    toolMs: left.toolMs + (delta.toolMs ?? 0),
+    toolCalls: left.toolCalls + (delta.toolCalls ?? 0),
+    tools,
+  };
+}
+
+/**
+ * Fold one timing delta into its turn's bucket and into the session total.
+ * @param state - the fold state.
+ * @param turn - the turn the delta belongs to.
+ * @param delta - the measurement.
+ * @returns the next state.
+ */
+function withTiming(state, turn, delta) {
+  const key = String(turn);
+  return {
+    ...state,
+    timing: {
+      total: addTiming(state.timing.total, delta),
+      turns: { ...state.timing.turns, [key]: addTiming(state.timing.turns[key] ?? ZERO_TIMING, delta) },
+    },
+  };
+}
+
+/**
+ * The provider's output-token count for one settlement, when it reported a
+ * usable one (decode throughput divides by exactly this).
+ */
+function outputTokensOf(usage) {
+  if (usage === null || typeof usage !== "object") return null;
+  const value = usage.outputTokens;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** The first output-token instant of one embedded stream, or null when unreadable. */
+function firstTokenTimeOf(stream) {
+  if (!Array.isArray(stream)) return null;
+  const first = assistantStreamFirstTokenTime(stream);
+  return typeof first === "number" && Number.isFinite(first) ? first : null;
+}
+
+/**
  * Build one wire view from a fold state. Pure, and deliberately uncached: the
  * live unit memoizes around it so a publication only happens on a changed
  * state reference, while an off-request fold (the cold-session read endpoint)
@@ -174,6 +278,7 @@ function statsView(state) {
     model: state.model,
     total: state.total,
     turns,
+    timing: state.timing,
   };
 }
 
@@ -200,6 +305,25 @@ const stateSchema = z
     lastSlot: z.string().nullable(),
     /** Model last seen for each turn, for the per-turn route line. */
     turnModels: z.record(z.string(), z.string()),
+    /** Per-turn and whole-session operation-type timings. */
+    timing: timingViewSchema,
+    /** turn/start instant of the turn in flight, or null between turns. */
+    turnStart: z.number().nonnegative().nullable(),
+    /** The step awaiting its settlement. */
+    openStep: z
+      .object({
+        turn: z.number().int().nonnegative(),
+        step: z.number().int().nonnegative(),
+        startTime: z.number().nonnegative(),
+        firstTokenTime: z.number().nonnegative().nullable(),
+      })
+      .strict()
+      .nullable(),
+    /** callId → dispatched tool call still awaiting its result. */
+    pendingCalls: z.record(
+      z.string(),
+      z.object({ name: z.string(), time: z.number().nonnegative(), turn: z.number().int().nonnegative() }).strict()
+    ),
   })
   .strict();
 
@@ -322,6 +446,86 @@ function usageOf(event) {
   return sample === null || sample === undefined ? undefined : sample.usage;
 }
 
+/**
+ * Fold one Assistant settlement's billed usage into its own `(turn, step)`
+ * slot. A settlement replaces that slot; `llm/retry-started` closes it first,
+ * so a retried attempt adds instead — token-meter's retry rule.
+ * @param state - the fold state.
+ * @param event - an `assistant/message` or `assistant/attempt` event.
+ * @param pricing - the effective price table.
+ * @returns the next state.
+ */
+function foldSettlement(state, event, pricing) {
+  const data = event.data;
+  const turn = data?.turn;
+  const step = data?.step;
+  if (!Number.isInteger(turn) || !Number.isInteger(step)) return state;
+  const usage = usageOf(event);
+  if (usage === undefined) return state;
+  const bucket = priceUsage(usage, familyOf(state.model), isPeak(event.time), pricing);
+  if (bucket === null) return state;
+  const key = `${turn}:${step}`;
+  const previous = state.lastSlot === key ? state.slots[key] : undefined;
+  const delta = subtractBuckets(bucket, previous);
+  if (previous !== undefined && isZeroBucket(delta)) return state;
+  const turnKey = String(turn);
+  const turns = { ...state.turns, [turnKey]: addBuckets(state.turns[turnKey] ?? ZERO_BUCKET, delta) };
+  const turnModels = state.turnModels[turnKey] === state.model ? state.turnModels : { ...state.turnModels, [turnKey]: state.model };
+  return {
+    ...state,
+    total: addBuckets(state.total, delta),
+    turns,
+    turnModels,
+    slots: { ...state.slots, [key]: bucket },
+    lastSlot: key,
+  };
+}
+
+/**
+ * Close the step an `assistant/message` settles: model wall time, first-token
+ * wait, and decode span all end here.
+ * @param state - the fold state.
+ * @param event - the settling `assistant/message` event.
+ * @returns the next state.
+ */
+function closeStep(state, event) {
+  const open = state.openStep;
+  const data = event.data;
+  if (open === null || open.turn !== data?.turn || open.step !== data?.step) return state;
+  const firstToken = open.firstTokenTime ?? firstTokenTimeOf(data.stream);
+  const delta = { modelMs: Math.max(0, event.time - open.startTime), modelCalls: 1 };
+  if (firstToken !== null) {
+    delta.ttftMs = Math.max(0, firstToken - open.startTime);
+    delta.ttftSteps = 1;
+    const outputTokens = outputTokensOf(data.usage);
+    if (outputTokens !== null) {
+      delta.decodeMs = Math.max(0, event.time - firstToken);
+      delta.decodeTokens = outputTokens;
+    }
+  }
+  return withTiming({ ...state, openStep: null }, open.turn, delta);
+}
+
+/**
+ * Close the tool call a `tool/result` answers, attributing its wall time to the
+ * turn that dispatched it and to its own tool name.
+ * @param state - the fold state.
+ * @param event - the `tool/result` event.
+ * @returns the next state.
+ */
+function closeToolCall(state, event) {
+  const callId = event.data?.message?.source?.callId;
+  const pending = typeof callId === "string" ? state.pendingCalls[callId] : undefined;
+  if (pending === undefined) return state;
+  const { [callId]: _closed, ...rest } = state.pendingCalls;
+  const ms = Math.max(0, event.time - pending.time);
+  return withTiming({ ...state, pendingCalls: rest }, pending.turn, {
+    toolMs: ms,
+    toolCalls: 1,
+    tools: { [pending.name]: { calls: 1, ms } },
+  });
+}
+
 //#endregion
 
 //#region projection
@@ -339,7 +543,7 @@ function createStatsProjection(pricing) {
   let viewValue;
   return {
     key: PROJECTION_KEY,
-    stateVersion: 1,
+    stateVersion: 2,
     stateSchema,
     init: () => ({
       provider: "",
@@ -349,52 +553,70 @@ function createStatsProjection(pricing) {
       slots: {},
       lastSlot: null,
       turnModels: {},
+      timing: { total: ZERO_TIMING, turns: {} },
+      turnStart: null,
+      openStep: null,
+      pendingCalls: {},
     }),
     apply: (state, event) => {
-      if (event.type === "request/context") {
+      const type = event.type;
+      let next = state;
+
+      if (type === "request/context") {
         const data = event.data;
         const provider = typeof data?.provider === "string" ? data.provider : state.provider;
         const model = typeof data?.model === "string" ? data.model : state.model;
-        return provider === state.provider && model === state.model ? state : { ...state, provider, model };
-      }
-      if (event.type === "request/header") {
+        if (provider !== state.provider || model !== state.model) next = { ...next, provider, model };
+      } else if (type === "request/header") {
         const config = event.data?.header?.config;
         const provider = typeof config?.provider === "string" ? config.provider : state.provider;
         const model = typeof config?.model === "string" ? config.model : state.model;
-        return provider === state.provider && model === state.model ? state : { ...state, provider, model };
-      }
-      // A retried attempt is a SECOND billed request: closing the slot here is
-      // what makes the next settlement add instead of replace (token-meter's
-      // own retry rule).
-      if (event.type === "llm/retry-started") {
+        if (provider !== state.provider || model !== state.model) next = { ...next, provider, model };
+      } else if (type === "llm/retry-started") {
+        const key = `${event.data.turn}:${event.data.step}`;
+        if (state.lastSlot === key) next = { ...next, lastSlot: null };
+      } else if (type === "turn/start") {
+        if (state.turnStart !== event.time || state.openStep !== null) next = { ...next, turnStart: event.time, openStep: null };
+      } else if (type === "step/start") {
+        const { turn, step } = event.data;
+        if (Number.isInteger(turn) && Number.isInteger(step)) {
+          next = { ...next, openStep: { turn, step, startTime: event.time, firstTokenTime: null } };
+        }
+      } else if (type === "assistant/attempt") {
+        // The first token can land here, one event before the settlement.
+        const open = state.openStep;
         const data = event.data;
-        const key = `${data.turn}:${data.step}`;
-        return state.lastSlot === key ? { ...state, lastSlot: null } : state;
+        if (open !== null && open.firstTokenTime === null && open.turn === data?.turn && open.step === data?.step) {
+          const first = firstTokenTimeOf(data.stream);
+          if (first !== null) next = { ...next, openStep: { ...open, firstTokenTime: first } };
+        }
+      } else if (type === "tool/call") {
+        const data = event.data;
+        let turn = data?.turn;
+        if (!Number.isInteger(turn) && state.openStep !== null) turn = state.openStep.turn;
+        if (typeof data?.callId === "string" && typeof data?.name === "string" && Number.isInteger(turn)) {
+          next = {
+            ...next,
+            pendingCalls: { ...state.pendingCalls, [data.callId]: { name: data.name, time: event.time, turn } },
+          };
+        }
+      } else if (type === "tool/result") {
+        next = closeToolCall(next, event);
+      } else if (type === "step/end") {
+        if (state.openStep !== null) next = { ...next, openStep: null };
+      } else if (type === "turn/end") {
+        const turn = event.data?.turn;
+        const wallMs = state.turnStart === null ? 0 : Math.max(0, event.time - state.turnStart);
+        const open = state.turnStart !== null || Object.keys(state.pendingCalls).length > 0;
+        if (open) {
+          const cleared = { ...next, turnStart: null, pendingCalls: {} };
+          next = Number.isInteger(turn) && wallMs > 0 ? withTiming(cleared, turn, { wallMs }) : cleared;
+        }
       }
-      if (event.type !== "assistant/message" && event.type !== "assistant/attempt") return state;
-      const data = event.data;
-      const turn = data?.turn;
-      const step = data?.step;
-      if (!Number.isInteger(turn) || !Number.isInteger(step)) return state;
-      const usage = usageOf(event);
-      if (usage === undefined) return state;
-      const bucket = priceUsage(usage, familyOf(state.model), isPeak(event.time), pricing);
-      if (bucket === null) return state;
-      const key = `${turn}:${step}`;
-      const previous = state.lastSlot === key ? state.slots[key] : undefined;
-      const delta = subtractBuckets(bucket, previous);
-      if (previous !== undefined && isZeroBucket(delta)) return state;
-      const turnKey = String(turn);
-      const turns = { ...state.turns, [turnKey]: addBuckets(state.turns[turnKey] ?? ZERO_BUCKET, delta) };
-      const turnModels = state.turnModels[turnKey] === state.model ? state.turnModels : { ...state.turnModels, [turnKey]: state.model };
-      return {
-        ...state,
-        total: addBuckets(state.total, delta),
-        turns,
-        turnModels,
-        slots: { ...state.slots, [key]: bucket },
-        lastSlot: key,
-      };
+
+      if (type === "assistant/message") next = closeStep(next, event);
+      if (type === "assistant/message" || type === "assistant/attempt") next = foldSettlement(next, event, pricing);
+      return next;
     },
     wire: {
       viewSchema: z
@@ -404,6 +626,7 @@ function createStatsProjection(pricing) {
           model: z.string(),
           total: z.object(bucketShape).strict(),
           turns: z.record(z.string(), z.object({ ...bucketShape, model: z.string() }).strict()),
+          timing: timingViewSchema,
         })
         .strict(),
       view: (state) => {

@@ -21,7 +21,7 @@ No runtime dependency on any third-party plugin.
 | --- | --- |
 | `bash scripts/check.sh` | **The single success criterion.** Parses both halves, runs the host-half behaviour suite, checks bundle wiring. |
 | `bash scripts/link-deps.sh` | Points the checkout's `node_modules` at the running harness (`zod`, `@deepseek-ai/dsh-llm`, `-credentials`, `-session-projection`, `cordis`). `check.sh` runs it on demand. |
-| `node scripts/gui-probe.mjs --url <authenticated-url> [--session <id>] [--out shot.png] [--wait <sel>] [--click <sel>]` | Renders the live GUI in headless Chromium and reports what reached the DOM (`--report` takes a JS expression). |
+| `node scripts/gui-probe.mjs --url <authenticated-url> [--session <id>] [--out shot.png] [--wait <sel>] [--click <sel>] [--size W,H]` | Renders the live GUI in headless Chromium and reports what reached the DOM (`--report` takes a JS expression). `--size 1000,900` exercises the narrow-viewport fallback. |
 
 Install into a profile:
 
@@ -59,6 +59,19 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   `cannot get property "foo" without inject` unless the reading context injected
   `foo`; `ctx.get("foo")` never throws. That asymmetry is the fastest way to tell
   why an injection callback silently did nothing.
+- **Slot wrappers are `display: contents`, so they measure 0×0.** Walking from a
+  rendered slot entry to "its container" hits a zero-size wrapper first; any
+  layout decision that needs the real band must walk up past every zero-width
+  ancestor. Getting this wrong silently disabled the session pill's inline
+  placement (`halfBand` came out as 0).
+- **Placement cannot rely on re-rendering.** The official stats row mounts on
+  its own schedule and its labels change as the session runs, so a layout effect
+  alone can measure before the row exists and never run again. The client pairs
+  the render effect with a `MutationObserver` on the dock slot wrapper.
+- **The composer dock stacks its entries.** Sharing the official stats line is
+  therefore negative-margin work, and the lifted row must be
+  `pointer-events: none` (with the pill re-enabled) or it swallows the official
+  pills' hover and clicks.
 - `dsh plugin add` only writes the profile manifest; a bundle becomes a profile
   layer at boot **unless** `dsh-hotswap` is mounted, which watches
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or
