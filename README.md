@@ -28,13 +28,16 @@ the branch button, next to the official "consumed" and "ran for" pills. It shows
 
 **Per session** — a pill on the **same line** as the official session stats
 (`1 turns 297 steps · 237 tok/s · 73.2M tok · Cache hit 99.7%`), immediately to
-their right: `¥2.72 · Account balance ¥113.45`. It opens the same breakdown for
+their right: `¥2.72 · today ¥0.41 · Account balance ¥113.45` — the session total,
+what of it was spent **today**, and the live account balance. A session picked up
+again days later shows today's spend from zero, not the lifetime figure. It opens the same breakdown for
 the whole durable log, plus the timing section and 账户余额 read live from the
 DeepSeek billing API:
 
 | Row | Meaning |
 | --- | --- |
 | Session cost | 会话总费用, CNY |
+| today | 今日 — this session's spend on the browser's calendar day |
 | of which cache re-read | 其中缓存重读 — the part of the bill that is the same context read again |
 | of which compaction | 其中压缩摘要 — the summarize calls' own bill, which **no other display counts** |
 | Cache hit / read / uncached / cache write / total input / output | whole-session token buckets |
@@ -192,6 +195,9 @@ browser page** to pick up the new client bundle.
   It carries no build step: it is a hand-written bundle in the
   `window.__ModuleLoader__.load({ id, factory })` form, so the package installs
   straight from a checkout.
+- **Daily spend** is folded by local calendar day (the host's clock, which is the
+  browser's too) and kept for the newest 31 days, so a session carried across
+  months does not grow its checkpoint without bound.
 - **Session-row placement** is measured, not hard-coded, and the pair stays
   centred. The composer dock stacks its slot entries and the official stats row
   is a centred flex row this plugin does not own, so three things are measured:

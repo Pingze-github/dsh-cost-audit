@@ -409,6 +409,33 @@ function outputTokensOf(usage) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+/** How many calendar days of spend the fold keeps. */
+const DAYS_KEPT = 31;
+
+/**
+ * The local calendar day of one event, as `YYYY-MM-DD`.
+ *
+ * The fold keys daily spend to the host's clock — the same clock the browser
+ * reads, so "today" means the same thing on both sides — and the keys sort
+ * lexicographically, which is what makes trimming the oldest a one-liner.
+ *
+ * @param time - the event's epoch milliseconds.
+ * @returns the day key.
+ */
+function dayOf(time) {
+  const date = new Date(time);
+  return `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/** The newest `DAYS_KEPT` days of spend, for the wire. */
+function recentDays(days) {
+  const keys = Object.keys(days);
+  if (keys.length <= DAYS_KEPT) return days;
+  const kept = {};
+  for (const key of keys.sort().slice(-DAYS_KEPT)) kept[key] = days[key];
+  return kept;
+}
+
 /** Prompt-side total of one billed bucket. */
 function inputTokensOf(bucket) {
   return bucket.uncachedInputTokens + bucket.cacheReadTokens + bucket.cacheWriteTokens;
@@ -441,6 +468,7 @@ function statsView(state) {
     total: state.total,
     turns,
     timing: state.timing,
+    days: recentDays(state.days),
     compaction: state.compaction,
     metrics: statsMetrics(state),
     advice: buildAdvice(state),
@@ -485,6 +513,8 @@ const stateSchema = z
       })
       .strict()
       .nullable(),
+    /** Local calendar day → that day's billed spend, in CNY × 1e9. */
+    days: z.record(z.string(), z.number().int().nonnegative()),
     /** What the log says about compaction, and what it cost. */
     compaction: compactionSchema,
     /** Bounded raw tallies the advisor reads. */
@@ -644,6 +674,7 @@ function foldSettlement(state, event, pricing) {
   const turnKey = String(turn);
   const turns = { ...state.turns, [turnKey]: addBuckets(state.turns[turnKey] ?? ZERO_BUCKET, delta) };
   const turnModels = state.turnModels[turnKey] === state.model ? state.turnModels : { ...state.turnModels, [turnKey]: state.model };
+  const day = dayOf(event.time);
   return {
     ...state,
     total: addBuckets(state.total, delta),
@@ -651,6 +682,9 @@ function foldSettlement(state, event, pricing) {
     turnModels,
     slots: { ...state.slots, [key]: bucket },
     lastSlot: key,
+    // A replacement can settle across midnight, so clamp at zero rather than
+    // carry a negative day.
+    days: { ...state.days, [day]: Math.max(0, (state.days[day] ?? 0) + delta.costNano) },
   };
 }
 
@@ -749,6 +783,7 @@ function foldCompactionSummary(state, event, pricing) {
     if (bucket !== null) {
       compaction.summaryCostNano += bucket.costNano;
       compaction.summaryTokens += bucket.pricedTokens + bucket.unpricedTokens;
+      const day = dayOf(event.time);
       return {
         ...state,
         compaction,
@@ -757,6 +792,7 @@ function foldCompactionSummary(state, event, pricing) {
           costNano: state.total.costNano + bucket.costNano,
           cacheReadCostNano: state.total.cacheReadCostNano + bucket.cacheReadCostNano,
         },
+        days: { ...state.days, [day]: (state.days[day] ?? 0) + bucket.costNano },
       };
     }
   }
@@ -926,7 +962,7 @@ function createStatsProjection(pricing) {
   let viewValue;
   return {
     key: PROJECTION_KEY,
-    stateVersion: 4,
+    stateVersion: 5,
     stateSchema,
     init: () => ({
       provider: "",
@@ -939,6 +975,7 @@ function createStatsProjection(pricing) {
       timing: { total: ZERO_TIMING, turns: {} },
       turnStart: null,
       openStep: null,
+      days: {},
       compaction: ZERO_COMPACTION,
       signals: ZERO_SIGNALS,
       pendingCalls: {},
@@ -1040,6 +1077,7 @@ function createStatsProjection(pricing) {
           total: z.object(bucketShape).strict(),
           turns: z.record(z.string(), z.object({ ...bucketShape, model: z.string() }).strict()),
           timing: timingViewSchema,
+          days: z.record(z.string(), z.number().int().nonnegative()),
           compaction: compactionSchema,
           metrics: metricsSchema,
           advice: z.array(

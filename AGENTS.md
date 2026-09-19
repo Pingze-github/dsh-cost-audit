@@ -127,6 +127,11 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   metric is a ratio and another is a token count; comparing an absolute move
   against a share reported "got worse" for a 0.1% drift. Compare
   `(before - after) / before` and guard `before === 0`.
+- **The fold's `wire.view` is memoized on the state reference**, so anything read
+  from the wall clock inside `statsView` freezes until the next event. Daily
+  spend is therefore folded into a keyed map by `dayOf(event.time)` and the
+  *browser* picks today's key at render time — a day rollover lands without
+  needing an event.
 - `dsh plugin add` only writes the profile manifest; a bundle becomes a profile
   layer at boot **unless** `dsh-hotswap` is mounted, which watches
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or

@@ -551,6 +551,77 @@ const FLASH_PEAK = 9000 * 0.04 * 1000 + (1000 + 0) * 2 * 1000 + 500 * 8 * 1000;
 
 //#endregion
 
+//#region daily spend
+
+/**
+ * The local calendar day of one instant. The fold keys days to the host's own
+ * clock, so the test asks the same clock rather than assuming a timezone — the
+ * assertions that matter are the grouping and the sums.
+ */
+function dayKey(time) {
+	const date = new Date(time);
+	return `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+{
+	const usage = { inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+	const t1 = bjt(2026, 9, 21, 10);
+	const t2 = bjt(2026, 9, 22, 10);
+	const { view } = fold([route("deepseek-flash"), settle(1, 1, usage, t1), settle(1, 2, usage, t2), settle(1, 3, usage, t2)]);
+	assert.equal(Object.keys(view.days).length, 2, "spend is bucketed by local day");
+	assert.equal(view.days[dayKey(t1)], 2000000, "the first day holds its own settlement");
+	assert.equal(view.days[dayKey(t2)], 4000000, "the second day holds both of its own");
+	assert.equal(view.total.costNano, 6000000, "the days add up to the session total");
+}
+
+{
+	// Two settlements of one slot: the second replaces, so the day follows.
+	const first = { inputTokens: 10000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+	const second = { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+	const time = bjt(2026, 9, 21, 10);
+	const { view } = fold([route("deepseek-flash"), settle(1, 1, first, time), settle(1, 1, second, time + 1000)]);
+	assert.equal(view.days[dayKey(time)], 200000, "a replacement corrects its own day");
+}
+
+{
+	// A compaction bills to the day it ran.
+	const time = bjt(2026, 9, 21, 10);
+	const { view } = fold([
+		route("deepseek-flash"),
+		{
+			type: "compaction/summary",
+			seq: 1,
+			time,
+			data: {
+				compactionId: "c1",
+				summary: [],
+				shadowedRange: { start: 0, end: 1 },
+				shadowedSeqs: [0],
+				shadowedTokenCount: 10,
+				provider: "deepseek-official",
+				model: "deepseek-flash",
+				rawOutput: [],
+				llmStreamCall: true,
+				usage: { inputTokens: 1000, outputTokens: 0 }
+			}
+		}
+	]);
+	assert.equal(view.days[dayKey(time)], 2000000, "a summarize call counts toward its day");
+}
+
+{
+	// The wire keeps the newest 31 days only.
+	const usage = { inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+	const events = [route("deepseek-flash")];
+	for (let index = 0; index < 40; index += 1) events.push(settle(1, index + 1, usage, bjt(2026, 7, 1, 10) + index * 86400000));
+	const { view } = fold(events);
+	assert.equal(Object.keys(view.days).length, 31, "daily history is bounded");
+	assert.ok(!Object.hasOwn(view.days, dayKey(bjt(2026, 7, 1, 10))), "the oldest day is dropped");
+	assert.ok(Object.hasOwn(view.days, dayKey(bjt(2026, 7, 1, 10) + 39 * 86400000)), "the newest day is kept");
+}
+
+//#endregion
+
 //#region metrics
 
 {

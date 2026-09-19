@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
 			"turn.input": "总输入",
 			"turn.output": "输出",
 			"turn.cost": "本轮费用",
-			"session.aria": "会话费用 {cost} · 账户余额 {balance}（点击查看详情）",
+			"session.aria": "会话费用 {cost} · 今日 {today} · 账户余额 {balance}（点击查看详情）",
 			"session.title": "会话用量与费用",
 			"session.cost": "会话总费用",
 			"session.cacheHit": "缓存命中率",
@@ -90,6 +90,7 @@ window.__ModuleLoader__.load({
 			"duration.seconds": "{seconds}秒",
 			"duration.minutes": "{minutes}分{seconds}秒",
 			"tps": "{tps} tok/s",
+			"session.today": "今日",
 			"session.cacheReadCost": "其中缓存重读",
 			"session.compaction": "其中压缩摘要",
 			"session.compactionValue": "{cost} · {count} 次压缩",
@@ -162,7 +163,7 @@ window.__ModuleLoader__.load({
 			"turn.input": "Total input",
 			"turn.output": "Output",
 			"turn.cost": "Turn cost",
-			"session.aria": "Session cost {cost} · balance {balance} (click for details)",
+			"session.aria": "Session cost {cost} · today {today} · balance {balance} (click for details)",
 			"session.title": "Session usage & cost",
 			"session.cost": "Session cost",
 			"session.cacheHit": "Cache hit",
@@ -192,6 +193,7 @@ window.__ModuleLoader__.load({
 			"duration.seconds": "{seconds}s",
 			"duration.minutes": "{minutes}m {seconds}s",
 			"tps": "{tps} tok/s",
+			"session.today": "today",
 			"session.cacheReadCost": "of which cache re-read",
 			"session.compaction": "of which compaction",
 			"session.compactionValue": "{cost} · {count}×",
@@ -1236,6 +1238,21 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		/**
+		 * This session's spend so far today, read from the fold's own daily
+		 * buckets by the browser's calendar day — the same clock the host keyed
+		 * them with. A day with no settlements reads as zero, which is the
+		 * honest answer for a session picked up again the next morning.
+		 * @param stats - the session projection value.
+		 * @returns cost in CNY × 1e9.
+		 */
+		function todayCostNano(stats) {
+			if (stats.days === undefined) return 0;
+			const now = new Date();
+			const key = `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+			return stats.days[key] ?? 0;
+		}
+
 		/** The live account read, lifted so both pills (and the panel) share one fetch. */
 		function useBalance() {
 			const [balance, setBalance] = react.useState(undefined);
@@ -1261,9 +1278,14 @@ window.__ModuleLoader__.load({
 			}, [seat.open, balance]);
 			const bucket = stats.total;
 			const cost = formatCny(bucket.costNano);
+			const today = formatCny(todayCostNano(stats));
 			const balanceLabel = balanceText(balance.value, t);
 			const loaded = balance.value !== undefined && balance.value.ok === true;
 			const sections = [{ rows: bucketDetails(bucket, t, "session", t("session.cost")) }];
+			// `bucketDetails` ends with the session total; the daily figure breaks
+			// that total down, so it sits immediately after it and before the
+			// shares of it that this block appends next.
+			sections[0].rows.push(h(Detail, { key: "today", label: t("session.today"), children: formatCny(todayCostNano(stats), true) }));
 			if (bucket.cacheReadCostNano !== undefined) {
 				sections[0].rows = sections[0].rows.concat([
 					h(Detail, {
@@ -1304,7 +1326,7 @@ window.__ModuleLoader__.load({
 						className: "dshstats-pill",
 						"aria-haspopup": "dialog",
 						"aria-expanded": seat.open,
-						"aria-label": t("session.aria", { cost, balance: balanceLabel }),
+						"aria-label": t("session.aria", { cost, today, balance: balanceLabel }),
 						onClick: () => {
 							seat.setOpen(!seat.open);
 						}
@@ -1314,6 +1336,8 @@ window.__ModuleLoader__.load({
 						"span",
 						{ className: "dshstats-label" },
 						cost,
+						h("span", { className: "dshstats-sep", "aria-hidden": true }, "·"),
+						`${t("session.today")} ${today}`,
 						h("span", { className: "dshstats-sep", "aria-hidden": true }, "·"),
 						`${t("session.balance")} ${balanceLabel}`
 					)
