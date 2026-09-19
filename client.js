@@ -117,7 +117,22 @@ window.__ModuleLoader__.load({
 			"advice.cacheHitDrop.title": "缓存命中率下滑",
 			"advice.cacheHitDrop.body": "{calls} 次调用里命中率 {percent}%。未命中按约 50 倍计价 —— 查一下是否有东西每轮在改请求头（AGENTS.md、技能注入）。",
 			"advice.balanceLow.title": "余额偏低",
-			"advice.balanceLow.body": "余额 {balance}，本会话已花 {cost}。按这个速度不多了。"
+			"advice.balanceLow.body": "余额 {balance}，本会话已花 {cost}。按这个速度不多了。",
+			"advice.manual": "这条需要你手动处理",
+			"advice.sent": "已发送",
+			"advice.blocked": "输入框里还有内容 —— 先清空再执行",
+			"advice.contextReread.action": "立即压缩本会话",
+			"advice.contextReread.instruction": "/compact",
+			"advice.fragmentedTools.action": "让它合并命令",
+			"advice.fragmentedTools.instruction": "把刚才那一批零碎的命令合并成一次调用（写成一个脚本再跑），不要一条一条来。后续的验证也照此办理。",
+			"advice.repeatedTarget.action": "让它别重复读",
+			"advice.repeatedTarget.instruction": "你在反复读同一个目标：{target}。一次读完把结论记下来，之后改用 grep 或局部读取定位，不要整篇重读。",
+			"advice.idleGrinding.action": "要一份进度汇报",
+			"advice.idleGrinding.instruction": "停下当前动作，先汇报：你在找什么、已经试过什么、现在卡在哪、下一步打算做什么。不要继续盲目摸索。",
+			"advice.toolFailures.action": "让它停下看错误",
+			"advice.toolFailures.instruction": "{tool} 已经连续失败多次。停下来把完整错误读一遍，说明根因和下一步方案，不要重复同样的调用。",
+			"advice.cacheHitDrop.action": "让它排查缓存",
+			"advice.cacheHitDrop.instruction": "本会话的缓存命中率偏低。查清楚是什么在每一轮改变请求头或前缀（AGENTS.md、技能注入、系统提示），找出并说明。",
 		};
 
 		const DICT_EN = {
@@ -192,7 +207,22 @@ window.__ModuleLoader__.load({
 			"advice.cacheHitDrop.title": "Cache hit rate has fallen",
 			"advice.cacheHitDrop.body": "{percent}% hit rate over {calls} calls. A miss bills at roughly 50× — check whether something rewrites the request head every turn (AGENTS.md, skill injection).",
 			"advice.balanceLow.title": "Balance running low",
-			"advice.balanceLow.body": "Balance {balance}; this session has spent {cost}."
+			"advice.balanceLow.body": "Balance {balance}; this session has spent {cost}.",
+			"advice.manual": "This one is yours to handle",
+			"advice.sent": "Sent",
+			"advice.blocked": "Clear the composer first",
+			"advice.contextReread.action": "Compact this session",
+			"advice.contextReread.instruction": "/compact",
+			"advice.fragmentedTools.action": "Ask it to merge commands",
+			"advice.fragmentedTools.instruction": "Merge that batch of small commands into a single call — write one script and run it — instead of one at a time. Do the same for later verification.",
+			"advice.repeatedTarget.action": "Ask it to stop re-reading",
+			"advice.repeatedTarget.instruction": "You keep re-reading the same target: {target}. Read it once, keep the conclusion, then locate things with grep or a partial read instead of reading it whole again.",
+			"advice.idleGrinding.action": "Ask for a status report",
+			"advice.idleGrinding.instruction": "Stop and report: what you are looking for, what you have already tried, where you are stuck, and what you plan to do next. Do not keep probing blindly.",
+			"advice.toolFailures.action": "Ask it to read the error",
+			"advice.toolFailures.instruction": "{tool} has failed repeatedly. Stop, read the full error, and state the root cause and your next plan; do not repeat the same call.",
+			"advice.cacheHitDrop.action": "Ask it to investigate",
+			"advice.cacheHitDrop.instruction": "This session's cache hit rate is low. Find out what changes the request head or prefix every turn (AGENTS.md, skill injection, system prompt) and report it."
 		};
 
 		//#endregion
@@ -255,7 +285,12 @@ window.__ModuleLoader__.load({
 			".dshstats-tag-info{background:var(--dsw-alias-bg-tertiary);color:var(--dsw-alias-label-tertiary)}",
 			".dshstats-dismiss,.dshstats-restore{color:var(--dsw-alias-label-caption);cursor:pointer;background:0 0;border:none;padding:0;font:inherit}",
 			".dshstats-dismiss:hover,.dshstats-restore:hover{color:var(--dsw-alias-label-secondary);text-decoration:underline}",
-			".dshstats-restore{margin-top:12px}"
+			".dshstats-restore{margin-top:12px}",
+			".dshstats-adviceFoot{margin-top:8px}",
+			".dshstats-act{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover);border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;padding:3px 10px;font:inherit;cursor:pointer}",
+			".dshstats-act:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-pressed)}",
+			".dshstats-act:disabled{color:var(--dsw-alias-label-caption);cursor:default;opacity:.6}",
+			".dshstats-manual{color:var(--dsw-alias-label-caption)}"
 		].join("");
 
 		const STYLE_TAG = "dsh-stats/pills.css";
@@ -773,6 +808,22 @@ window.__ModuleLoader__.load({
 			return fallback !== undefined && fallback.sessionId === sessionId ? fallback.stats : undefined;
 		}
 
+		/**
+		 * The advice codes a button can actually settle. Every one of them is a
+		 * submission into this session — either a slash command (`/compact`) or
+		 * a steering instruction the agent reads on its next step. The rest are
+		 * honest dead ends (a config value, a top-up), and the panel says so
+		 * rather than offering a button that does nothing.
+		 */
+		const ADVICE_ACTIONS = new Set([
+			"context-reread",
+			"fragmented-tools",
+			"repeated-target",
+			"idle-grinding",
+			"tool-failures",
+			"cache-hit-drop"
+		]);
+
 		/** The advice icon, with a fallback in case a release renames it. */
 		const ADVICE_ICON = primitives.IconLightOutline16 ?? primitives.IconDataOutline16;
 
@@ -987,6 +1038,7 @@ window.__ModuleLoader__.load({
 		/** Hook-free gate for the session slot, same contract as {@link TurnSlot}. */
 		function SessionSlot(props) {
 			if (typeof props.useChat !== "function" || typeof props.useProjection !== "function") return null;
+			if (typeof props.useInput !== "function" || props.inputActions === undefined) return null;
 			return h(SessionRow, props);
 		}
 
@@ -997,6 +1049,27 @@ window.__ModuleLoader__.load({
 		 * @param props - slot props carrying the session kit.
 		 * @returns the pill, or null until the session has billed anything.
 		 */
+		/**
+		 * Keeps a broken entry from taking the rest of the dock row with it.
+		 * The advice pill is the newest and riskiest code here, and a crash in
+		 * it must never cost a client its cost and balance pill.
+		 */
+		class SlotBoundary extends react.Component {
+			constructor(props) {
+				super(props);
+				this.state = { failed: false };
+			}
+			static getDerivedStateFromError() {
+				return { failed: true };
+			}
+			componentDidCatch(error) {
+				console.error("[dsh-stats] slot entry failed", error);
+			}
+			render() {
+				return this.state.failed ? null : this.props.children;
+			}
+		}
+
 		/**
 		 * The whole session-stats surface: one dock row that shares the official
 		 * stats line, holding the cost + balance pill and, when there is
@@ -1015,7 +1088,7 @@ window.__ModuleLoader__.load({
 				"span",
 				{ ref: rowRef, className: "dshstats-row", "data-dsh-stats-session": true },
 				h(SessionCostPill, shared),
-				h(AdvicePill, shared)
+				h(SlotBoundary, null, h(AdvicePill, shared))
 			);
 		}
 
@@ -1120,9 +1193,23 @@ window.__ModuleLoader__.load({
 		 * and remembered in this browser.
 		 */
 		function AdvicePill(props) {
-			const { t, stats, sessionId, balance } = props;
+			const { t, stats, sessionId, balance, inputActions, useInput } = props;
 			const seat = useStatDialog();
 			const [dismissed, setDismissed] = react.useState(() => readDismissed(sessionId));
+			const [sent, setSent] = react.useState([]);
+			// `useInput` is a selector hook, exactly like `useChat` and
+			// `useProjection`; two primitive reads keep it reference-stable.
+			const draft = useInput((state) => state.draft);
+			const phase = useInput((state) => state.phase);
+			// Acting means writing the composer draft and submitting it, so the
+			// composer has to be free first — never throw away what a human typed.
+			const busy = draft.trim() !== "" || phase !== "plain";
+			const run = (item) => {
+				if (busy || inputActions === undefined) return;
+				inputActions.setDraft(t(`advice.${ADVICE_KEYS[item.code]}.instruction`, adviceParams(item.code, item.values, t)));
+				inputActions.submit();
+				setSent(sent.concat([item.code]));
+			};
 			const fromLog = Array.isArray(stats.advice) ? stats.advice : [];
 			const low = balanceAdvice(stats, balance.value);
 			const all = low === null ? fromLog : fromLog.concat([low]);
@@ -1138,24 +1225,44 @@ window.__ModuleLoader__.load({
 				writeDismissed(sessionId, []);
 			};
 			const worst = live.some((item) => item.severity === "high") ? "high" : live.some((item) => item.severity === "warn") ? "warn" : "info";
-			const items = live.map((item) =>
-				h(
+			const items = live.map((item) => {
+				const segment = ADVICE_KEYS[item.code] ?? "info";
+				const action = ADVICE_ACTIONS.has(item.code);
+				const done = sent.includes(item.code);
+				return h(
 					"div",
 					{ key: item.code, className: "dshstats-advice" },
 					h(
 						"div",
 						{ className: "dshstats-adviceHead" },
 						h("span", { className: `dshstats-tag dshstats-tag-${item.severity}` }, t(`advice.${item.severity}`)),
-						h("span", { className: "dshstats-adviceTitle" }, t(`advice.${ADVICE_KEYS[item.code] ?? "info"}.title`)),
+						h("span", { className: "dshstats-adviceTitle" }, t(`advice.${segment}.title`)),
 						h(
 							"button",
 							{ type: "button", className: "dshstats-dismiss", onClick: () => dismiss(item.code) },
 							t("advice.dismiss")
 						)
 					),
-					h("p", { className: "dshstats-adviceBody" }, t(`advice.${ADVICE_KEYS[item.code] ?? "info"}.body`, adviceParams(item.code, item.values, t)))
-				)
-			);
+					h("p", { className: "dshstats-adviceBody" }, t(`advice.${segment}.body`, adviceParams(item.code, item.values, t))),
+					h(
+						"div",
+						{ className: "dshstats-adviceFoot" },
+						action
+							? h(
+									"button",
+									{
+										type: "button",
+										className: "dshstats-act",
+										disabled: busy || done,
+										title: busy ? t("advice.blocked") : undefined,
+										onClick: () => run(item)
+									},
+									done ? t("advice.sent") : t(`advice.${segment}.action`)
+								)
+							: h("span", { className: "dshstats-manual" }, t("advice.manual"))
+					)
+				);
+			});
 			if (dismissed.length > 0) {
 				items.push(
 					h(

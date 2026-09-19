@@ -98,6 +98,22 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   dispatch → result, so waiting for a human shows up as tool time (our session:
   18 minutes of 27). The per-tool breakdown is what makes this legible; do not
   "fix" it by dropping slow calls.
+- **`useInput` is a selector hook, like `useChat`/`useProjection`.** Calling it
+  with no argument crashes with `TypeError: l is not a function` deep inside
+  `useSyncExternalStoreWithSelector`, and the crash takes the **whole dock entry**
+  down (harness logs `slot entry crashed in 'conversation.composer.dock'`). Read
+  primitives: `useInput((state) => state.draft)`. `AdvicePill` now sits behind a
+  `SlotBoundary` so the next such mistake cannot cost a client its cost pill.
+- **Submitting into a session from a slot** is
+  `props.inputActions.setDraft(text)` then `props.inputActions.submit()`. The
+  first is a `discrete: true` Lexical update so the state is published before the
+  second reads it; `submit()` runs with mode `"queue"`, so it steers a running
+  turn instead of failing. Verified end to end by submitting `/goal` (a
+  read-only command — no model call, no mutation) into a finished session and
+  reading back `command/run` + `command/done` from its log.
+- **A new session renders the hero, not the conversation.** Slots under
+  `conversation.composer.dock` do not mount until the session has a transcript,
+  so anything reached through those props is unreachable in a fresh session.
 - `dsh plugin add` only writes the profile manifest; a bundle becomes a profile
   layer at boot **unless** `dsh-hotswap` is mounted, which watches
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or

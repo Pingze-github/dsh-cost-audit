@@ -63,17 +63,31 @@ A fourth pill appears **only while there is something worth saying** — a healt
 session pays no space for it. It opens a list of data-grounded suggestions, each
 with a severity, a one-line fix, and a per-session Dismiss:
 
-| Code | Fires when |
-| --- | --- |
-| `context-reread` | cache re-read is ≥ 35% of the session's spend (over 30+ model calls) |
-| `fragmented-tools` | one tool has 30+ calls, 60%+ of them under 2s |
-| `repeated-target` | the same tool hits the same file/command 4+ times |
-| `compaction-churn` | 2+ compactions, or the summaries themselves cost ≥ 10% of the session |
-| `tool-failures` | one tool fails 3 times in a row |
-| `model-retries` | 5+ model retries |
-| `idle-grinding` | 30+ steps with no write, edit, or deliverable |
-| `cache-hit-drop` | hit rate below 85% over 50+ calls |
-| `balance-low` | the balance covers fewer than five sessions at this burn rate |
+| Code | Fires when | One click does |
+| --- | --- | --- |
+| `context-reread` | cache re-read is ≥ 35% of the session's spend (over 30+ model calls) | **Compact this session** — submits `/compact` |
+| `fragmented-tools` | one tool has 30+ calls, 60%+ of them under 2s | steers the agent to merge the batch into one script |
+| `repeated-target` | the same tool hits the same file/command 4+ times | steers it to read once and locate with grep |
+| `idle-grinding` | 30+ steps with no write, edit, or deliverable | asks for a status report instead of more probing |
+| `tool-failures` | one tool fails 3 times in a row | tells it to stop and read the error |
+| `cache-hit-drop` | hit rate below 85% over 50+ calls | asks it to find what rewrites the request head |
+| `compaction-churn` | 2+ compactions, or the summaries cost ≥ 10% of the session | — (a config value, next session) |
+| `model-retries` | 5+ model retries | — |
+| `balance-low` | the balance covers fewer than five sessions at this burn rate | — (top up) |
+
+### Applying a tip
+
+Every actionable tip carries a button that submits into **this** session through
+the composer's own action face (`setDraft` + `submit`) — the same path the send
+button takes, so the message lands in the transcript and the agent picks it up on
+its next step (queued as steering when the turn is already running). A tip with
+no honest automated fix says "this one is yours to handle" rather than offering a
+button that would do nothing.
+
+Two guards, both deliberate: the button is **disabled while the composer holds a
+draft**, because acting means writing the composer and a click must never throw
+away what a human typed; and each tip disables itself once sent. Dismissing a tip
+is remembered per session in this browser.
 
 Every one is folded from the durable log — **the advisor never calls a model**,
 because a token-saving feature that spends tokens is self-defeating. The
