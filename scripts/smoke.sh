@@ -16,6 +16,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# This deployment's layout, derived rather than welded to one box: another
+# install has a different DSH home and a workspace directory named after its own
+# checkout path. All three are overridable for when the derivation is wrong.
+DSH_HOME="${DSH_HOME:-/root/.dsh}"
+SESSIONS_ROOT="${DSH_STATS_SESSIONS:-$DSH_HOME/sessions}"
+WORKSPACE_DEFAULT="--$(printf '%s' "${ROOT#/}" | tr '/' '-')--"
+WORKSPACE_DIR="${DSH_STATS_WORKSPACE:-$WORKSPACE_DEFAULT}"
+
 BASE="http://127.0.0.1:3080"
 JAR="${TMPDIR:-/tmp}/dsh-stats-smoke.cookies"
 GUI=0
@@ -47,7 +55,7 @@ fi
 
 echo "smoke: live invariants over every session"
 SESSIONS=()
-for dir in /root/.dsh/sessions/*/session-*/; do
+for dir in "$SESSIONS_ROOT"/*/session-*/; do
   [ -d "$dir" ] || continue
   SESSIONS+=("$(basename "$dir")")
 done
@@ -128,7 +136,7 @@ if [ "$GUI" = "1" ]; then
   echo "smoke: rendering the panel"
   # The most recently written session in this workspace is the one a human is
   # actually looking at; a fresh session renders the hero and no dock at all.
-  SESSION="${DSH_STATS_SESSION:-$(ls -t /root/.dsh/sessions/--mnt-f-DSH-dsh-stats--/session-*/session.v3.jsonl.zstd 2>/dev/null | head -1 | xargs -r dirname | xargs -r basename)}"
+  SESSION="${DSH_STATS_SESSION:-$(ls -t "$SESSIONS_ROOT/$WORKSPACE_DIR"/session-*/session.v3.jsonl.zstd 2>/dev/null | head -1 | xargs -r dirname | xargs -r basename)}"
   [ -z "$SESSION" ] && { echo "smoke: no session in this workspace to render" >&2; exit 1; }
   echo "smoke: session $SESSION"
   node scripts/gui-probe.mjs --url "$TOKEN_URL" --session "$SESSION" \
