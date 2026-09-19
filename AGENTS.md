@@ -138,6 +138,19 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   while the sample is short, and `/compact`'s own bill is diffed from the
   `compaction.count` / `summaryCostNano` snapshotted into the record at click
   time.
+- **Renaming a `link:`-installed plugin leaves a colliding boot entry.** `dsh web`
+  mounts the profile's bundles at boot, and `dsh plugin add/remove` hot-swaps only
+  the *new* entry — it cannot unmount the one from boot. After the rename both
+  `dsh-stats` and `dsh-cost-audit` resolved to the same `client.js`, so the
+  browser executed one bundle twice and died with `client-modules: duplicate
+  factory registration for "dsh-cost-audit"`, which cascades into other modules
+  (`@deepseek-ai/dsh-api-gateway` too) and shows the user "Failed to load
+  plugins". A stub package under the old name does **not** help: the server
+  resolved the client path at boot and caches it. What works without restarting
+  the harness is removing the bundle from the profile manifest and adding it
+  back — every entry then re-resolves its path, and the stale one resolves to
+  nothing and drops out. A `dsh web` restart does the same and kills the session
+  hosting it.
 - **An advisor must be closed under its own advice.** The re-read tip
   recommends `/compact`; the churn tip fired at `compaction.count >= 2`. So
   doing what the panel said produced a second compaction and an immediate
