@@ -20,6 +20,7 @@ No runtime dependency on any third-party plugin.
 | Command | What it does |
 | --- | --- |
 | `bash scripts/check.sh` | **The single success criterion.** Parses both halves, runs the host-half behaviour suite, checks bundle wiring. |
+| `bash scripts/smoke.sh [--gui]` | The runtime verification in **one call**: the gate, the plugin's hot-swap phase, then an invariant sweep over every session on the machine through the live route (`--gui` adds a headless render of the newest session here). Prefer this to a handful of curls. |
 | `bash scripts/link-deps.sh` | Points the checkout's `node_modules` at the running harness (`zod`, `@deepseek-ai/dsh-llm`, `-credentials`, `-session-projection`, `cordis`). `check.sh` runs it on demand. |
 | `node scripts/gui-probe.mjs --url <authenticated-url> [--session <id>] [--out shot.png] [--wait <sel>] [--click <sel>] [--size W,H]` | Renders the live GUI in headless Chromium and reports what reached the DOM (`--report` takes a JS expression). `--size 1000,900` exercises the narrow-viewport fallback. |
 
