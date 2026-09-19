@@ -94,6 +94,7 @@ window.__ModuleLoader__.load({
 			"session.cacheReadCost": "其中缓存重读",
 			"session.compaction": "其中压缩摘要",
 			"session.compactionValue": "{cost} · {count} 次压缩",
+			"session.compactionManual": "{cost} · {count} 次压缩（含手动 {manual}）",
 			"advice.pill": "{count} 条建议",
 			"advice.title": "省 Token 建议",
 			"advice.high": "紧急",
@@ -210,6 +211,7 @@ window.__ModuleLoader__.load({
 			"session.cacheReadCost": "of which cache re-read",
 			"session.compaction": "of which compaction",
 			"session.compactionValue": "{cost} · {count}×",
+			"session.compactionManual": "{cost} · {count}× ({manual} manual)",
 			"advice.pill": "{count} tips",
 			"advice.title": "Token-saving tips",
 			"advice.high": "Urgent",
@@ -1325,11 +1327,18 @@ window.__ModuleLoader__.load({
 				]);
 			}
 			if (stats.compaction !== undefined && stats.compaction.summaryCostNano > 0) {
+				// Name the ones the human asked for: without it this row cannot
+				// answer "did I do that, or did the harness?".
+				const manual = stats.compaction.manual ?? 0;
 				sections[0].rows = sections[0].rows.concat([
 					h(Detail, {
 						key: "compactionCost",
 						label: t("session.compaction"),
-						children: t("session.compactionValue", { cost: formatCny(stats.compaction.summaryCostNano), count: stats.compaction.count })
+						children: t(manual > 0 ? "session.compactionManual" : "session.compactionValue", {
+							cost: formatCny(stats.compaction.summaryCostNano),
+							count: stats.compaction.count,
+							manual
+						})
 					})
 				]);
 			}
