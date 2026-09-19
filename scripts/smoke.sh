@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dsh-stats — the runtime verification, in one call.
+# dsh-cost-audit — the runtime verification, in one call.
 #
 # `check.sh` is the static gate: it parses both halves and runs the host suite on
 # synthetic events. This script asks the *running* harness instead, and sweeps
@@ -23,9 +23,11 @@ DSH_HOME="${DSH_HOME:-/root/.dsh}"
 SESSIONS_ROOT="${DSH_STATS_SESSIONS:-$DSH_HOME/sessions}"
 WORKSPACE_DEFAULT="--$(printf '%s' "${ROOT#/}" | tr '/' '-')--"
 WORKSPACE_DIR="${DSH_STATS_WORKSPACE:-$WORKSPACE_DEFAULT}"
+# The loader entry id is the package name; derive it so a rename cannot desync.
+PLUGIN_ID="$(python3 -c 'import json;print(json.load(open("package.json"))["name"])')"
 
 BASE="http://127.0.0.1:3080"
-JAR="${TMPDIR:-/tmp}/dsh-stats-smoke.cookies"
+JAR="${TMPDIR:-/tmp}/dsh-cost-audit-smoke.cookies"
 GUI=0
 [ "${1:-}" = "--gui" ] && GUI=1
 
@@ -41,15 +43,16 @@ AUTH=(-b "$JAR" -H 'Origin: http://127.0.0.1:3080')
 echo "smoke: static gate"
 bash scripts/check.sh
 
-echo "smoke: plugin phase"
-PHASE=$(curl -s "${AUTH[@]}" "$BASE/_dsh/hotswap/state" | python3 -c '
-import json,sys
+echo "smoke: plugin phase ($PLUGIN_ID)"
+PHASE=$(curl -s "${AUTH[@]}" "$BASE/_dsh/hotswap/state" | PLUGIN_ID="$PLUGIN_ID" python3 -c '
+import json, os, sys
+target = os.environ["PLUGIN_ID"]
 entries = json.load(sys.stdin)["value"]["entries"]
-hit = [e for e in entries if e["id"] == "dsh-stats"]
+hit = [e for e in entries if e["id"] == target]
 print(hit[0]["phase"] if hit else "missing")
 ')
 if [ "$PHASE" != "active" ]; then
-  echo "smoke: dsh-stats phase is '$PHASE', expected 'active'" >&2
+  echo "smoke: $PLUGIN_ID phase is '$PHASE', expected 'active'" >&2
   exit 1
 fi
 
@@ -85,7 +88,7 @@ for session in sessions:
     raw = subprocess.run(
         ["curl", "-s", "-b", jar, "-X", "POST",
          "-H", "content-type: application/json", "-H", "Origin: http://127.0.0.1:3080",
-         "-d", json.dumps({"sessionId": session}), f"{base}/api/dsh-stats.balance"],
+         "-d", json.dumps({"sessionId": session}), f"{base}/api/dsh-cost-audit.balance"],
         capture_output=True, text=True,
     ).stdout
     try:

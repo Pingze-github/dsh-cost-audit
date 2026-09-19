@@ -180,7 +180,7 @@ a live read, so it is the ground truth to check the estimate against.
 Every field is optional; overrides go in a profile patch layer with the same id.
 
 ```yaml
-- id: dsh-stats
+- id: dsh-cost-audit
   config:
     baseUrl: "https://api.deepseek.com"   # billing API origin
     credentialRef: "DEEPSEEK_API_KEY"     # reference resolved through ctx.credentials
@@ -208,7 +208,7 @@ browser page** to pick up the new client bundle.
 
 ## How it works
 
-- **Host half** (`index.js`) registers one session projection, `dshStats`, that
+- **Host half** (`index.js`) registers one session projection, `dshCostAudit`, that
   folds the whole durable log into per-turn and whole-session billed buckets with
   their CNY cost. It rides the same pipeline as the harness's own `tokenUsage` /
   `sessionStats` units, so figures stay complete however much history a client
@@ -216,10 +216,10 @@ browser page** to pick up the new client bundle.
   replaces its own `(turn, step)` slot, and `llm/retry-started` closes that slot
   so a retried attempt adds instead.
 - **Host half** also registers one exact Connection Fetch route,
-  `/api/dsh-stats.balance`, which serves the account balance and an on-demand
+  `/api/dsh-cost-audit.balance`, which serves the account balance and an on-demand
   fold of any session. The fold exists because the projection pipeline only
   serves a unit to a client once that session has a materialized cell: a session
-  whose persisted projection checkpoint predates this plugin has no `dshStats`
+  whose persisted projection checkpoint predates this plugin has no `dshCostAudit`
   row, and the route closes that gap from the same unit definition.
 - **Client half** (`client.js`) registers into the harness's
   `conversation.chat.assistant-actions` and `conversation.composer.dock` slots.
@@ -243,7 +243,7 @@ browser page** to pick up the new client bundle.
 ## Layout
 
 ```
-index.js            host half: dshStats projection + /api/dsh-stats.balance route
+index.js            host half: dshCostAudit projection + /api/dsh-cost-audit.balance route
 index.d.ts          public types + the SessionProjectionMap augmentation
 client.js           browser half: the two slot entries
 cordis.patch.yml    bundle patch (mounts the host entry)

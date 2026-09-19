@@ -1,5 +1,5 @@
 /**
- * dsh-stats — browser half.
+ * dsh-cost-audit — browser half.
  *
  * Adds two extensions to the harness's own statistics surfaces, in the
  * official form (an icon pill that opens a trigger-anchored `dt`/`dd` panel,
@@ -7,11 +7,11 @@
  *
  * - a per-turn cost pill beside the official turn token/time pills in
  *   `conversation.chat.assistant-actions`, reading that turn's billed buckets
- *   from the host's `dshStats` projection and showing its CNY cost plus the
+ *   from the host's `dshCostAudit` projection and showing its CNY cost plus the
  *   full hit-rate / cache / input / output breakdown;
  * - a whole-session cost + account-balance pill in `conversation.composer.dock`,
  *   under the official session stats row. The balance is the only live read:
- *   it rides the plugin's own `/dsh-stats` Connection RPC channel.
+ *   it rides the plugin's own `/dsh-cost-audit` Connection RPC channel.
  *
  * This module is the body of the package's `./client` bundle: it registers a
  * factory in the bootstrap facade and materializes only when the web app
@@ -22,11 +22,11 @@
  * session kit, or an unresolved turn renders nothing instead of throwing, so a
  * host-half problem can never break the conversation view.
  *
- * @module dsh-stats/client
+ * @module dsh-cost-audit/client
  */
 
 window.__ModuleLoader__.load({
-	id: "dsh-stats",
+	id: "dsh-cost-audit",
 	factory: (require) => {
 		var module = { exports: {} };
 		module.exports;
@@ -37,10 +37,10 @@ window.__ModuleLoader__.load({
 		const h = react.createElement;
 		const Fragment = react.Fragment;
 
-		const NS = "dsh-stats";
+		const NS = "dsh-cost-audit";
 		/** The host half's exact Fetch route on Connection's `/api` prefix. */
-		const BALANCE_PATH = "/api/dsh-stats.balance";
-		const PROJECTION = "dshStats";
+		const BALANCE_PATH = "/api/dsh-cost-audit.balance";
+		const PROJECTION = "dshCostAudit";
 		const NANO = 1e9;
 
 		//#region locale
@@ -356,10 +356,10 @@ window.__ModuleLoader__.load({
 			".dshstats-verdictDetail,.dshstats-verdictSample,.dshstats-verdictSpent,.dshstats-verdictRemaining{color:var(--dsw-alias-label-tertiary)}"
 		].join("");
 
-		const STYLE_TAG = "dsh-stats/pills.css";
+		const STYLE_TAG = "dsh-cost-audit/pills.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(STYLE_TAG) + "]") === null) {
 			const tag = document.createElement("style");
-			tag.dataset.plugin = "dsh-stats";
+			tag.dataset.plugin = "dsh-cost-audit";
 			tag.dataset.pluginCss = STYLE_TAG;
 			tag.textContent = CSS;
 			document.head.appendChild(tag);
@@ -808,11 +808,11 @@ window.__ModuleLoader__.load({
 		const STATS_MIN_INTERVAL_MS = 3000;
 
 		/**
-		 * Whole-session `dshStats` for one session, folded on the host.
+		 * Whole-session `dshCostAudit` for one session, folded on the host.
 		 *
 		 * The projection pipeline only serves a unit once the session has a
 		 * materialized cell, so a session whose persisted projection checkpoint
-		 * predates this plugin carries no `dshStats` — the endpoint covers
+		 * predates this plugin carries no `dshCostAudit` — the endpoint covers
 		 * exactly that case, from the same unit definition the live pipeline
 		 * uses. Reads are deduplicated and spaced out.
 		 * @param sessionId - the session to fold.
@@ -837,7 +837,7 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * The session's `dshStats`: the live projection when the host serves it,
+		 * The session's `dshCostAudit`: the live projection when the host serves it,
 		 * else the on-demand fold. Callers must gate on both session hooks
 		 * first, so every hook here runs on every render of a mounted caller.
 		 */
@@ -1056,7 +1056,16 @@ window.__ModuleLoader__.load({
 			return { state: "steady", detail, remaining: null };
 		}
 
-		/** Sessions whose dismissed advice codes are remembered in this browser. */
+		/**
+		 * Sessions whose dismissed advice codes are remembered in this browser.
+		 *
+		 * Deliberately still `dsh-stats.*` after the plugin became dsh-cost-audit:
+		 * an adoption record carries the metric reading its verdict will be
+		 * judged against, so renaming the namespace would silently throw away
+		 * what the user already acted on and leave their verdict blocks blank.
+		 * The CSS namespace keeps the old name for a weaker version of the same
+		 * reason — it is invisible, and renaming it would churn every selector.
+		 */
 		const DISMISS_PREFIX = "dsh-stats.dismissed";
 
 		/** Read the advice codes dismissed for one session. */
@@ -1240,7 +1249,7 @@ window.__ModuleLoader__.load({
 				return { failed: true };
 			}
 			componentDidCatch(error) {
-				console.error("[dsh-stats] slot entry failed", error);
+				console.error("[dsh-cost-audit] slot entry failed", error);
 			}
 			render() {
 				return this.state.failed ? null : this.props.children;
@@ -1564,15 +1573,15 @@ window.__ModuleLoader__.load({
 		 * @param ctx - the owning UI Conversation context.
 		 */
 		function apply(ctx) {
-			ctx.effect(() => ctx.locale.register(NS, { zh: DICT_ZH, en: DICT_EN }), "dsh-stats: dictionaries");
+			ctx.effect(() => ctx.locale.register(NS, { zh: DICT_ZH, en: DICT_EN }), "dsh-cost-audit: dictionaries");
 			const t = ctx.locale.bind(NS);
 			ctx.slots.inject("conversation.chat.assistant-actions", () =>
-				ctx.slots.register({ name: "conversation.chat.assistant-actions", id: "dsh-stats-turn", order: 30, locale: NS }, (props) =>
+				ctx.slots.register({ name: "conversation.chat.assistant-actions", id: "dsh-cost-audit-turn", order: 30, locale: NS }, (props) =>
 					h(TurnSlot, { ...props, t: props.t ?? t })
 				)
 			);
 			ctx.slots.inject("conversation.composer.dock", () =>
-				ctx.slots.register({ name: "conversation.composer.dock", id: "dsh-stats-session", order: 10, locale: NS }, (props) =>
+				ctx.slots.register({ name: "conversation.composer.dock", id: "dsh-cost-audit-session", order: 10, locale: NS }, (props) =>
 					h(SessionSlot, { ...props, t: props.t ?? t })
 				)
 			);

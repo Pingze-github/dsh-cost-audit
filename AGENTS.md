@@ -1,4 +1,4 @@
-# dsh-stats — project facts
+# dsh-cost-audit — project facts
 
 Project-specific facts only. Global rules live in `~/.dsh/AGENTS.md`.
 
@@ -6,7 +6,7 @@ Project-specific facts only. Global rules live in `~/.dsh/AGENTS.md`.
 
 A DeepSeek Harness plugin, **not** a standalone app. Two halves:
 
-- `index.js` — host half. A plain Cordis plugin: registers the `dshStats` session
+- `index.js` — host half. A plain Cordis plugin: registers the `dshCostAudit` session
   projection and one exact Connection Fetch route.
 - `client.js` — browser half. Hand-written CJS bundle in the
   `window.__ModuleLoader__.load({ id, factory })` form; **no build step, no
@@ -40,7 +40,7 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   `/dsh-context` channel is dead in this deployment for the same reason. Use
   `connection.fetch.register({ path, methods, requestBody, fetch })` instead: it
   has no such dependency and is scoped to the calling fiber. The path must sit
-  under `/api/`, e.g. `/api/dsh-stats.balance`.
+  under `/api/`, e.g. `/api/dsh-cost-audit.balance`.
 - **Read services as *properties*, not `ctx.get()`.** Cordis's tracker only
   rebinds a service to the reading fiber (and only that rebinding makes
   `connection.fetch` / `.rpc` scope correctly) on a **property** read. Use
@@ -50,7 +50,7 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   projection checkpoint predates it.** The session list carries projections from
   `cachedSnapshot` (already-materialized cells only), so a unit missing from the
   checkpoint is simply absent until that session takes another event. That is
-  why the `/api/dsh-stats.balance` route also folds a session's log on demand —
+  why the `/api/dsh-cost-audit.balance` route also folds a session's log on demand —
   do not remove it as redundancy.
 - **A projection's `wire.view` must reuse its reference.** The live drive
   publishes on a changed `view` result compared with `Object.is`; rebuilding the
@@ -90,7 +90,7 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   `check.sh` now asserts every advice string actually differs between locales.
 - **Compaction spend is invisible everywhere else.** `compaction/summary` carries
   the summarize call's own `usage`, and nothing in the tree reads it: not
-  `tokenUsage`, not `sessionStats`, not `dsh-context`. `dshStats` folds it into
+  `tokenUsage`, not `sessionStats`, not `dsh-context`. `dshCostAudit` folds it into
   the session total and names it in its own panel row.
 - **`web/deepseek-search-llm-request` and `session/title-llm-request` log only a
   request body** — no usage, so their spend is not merely uncounted but
@@ -185,7 +185,7 @@ Plugins are hot-restarted (host code reload) with:
 
 ```bash
 curl -s -X POST -H 'content-type: application/json' -H 'Origin: http://127.0.0.1:3080' \
-  -b <cookie-jar> -d '{"id":"dsh-stats"}' http://127.0.0.1:3080/_dsh/hotswap/restart
+  -b <cookie-jar> -d '{"id":"dsh-cost-audit"}' http://127.0.0.1:3080/_dsh/hotswap/restart
 ```
 
 `GET /_dsh/hotswap/state` lists every loader entry with its phase — the quickest

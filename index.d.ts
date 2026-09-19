@@ -1,15 +1,15 @@
 /**
- * Public types of the `dsh-stats` host half, plus the one module augmentation
- * that makes `useProjection("dshStats")` type-check in client code.
+ * Public types of the `dsh-cost-audit` host half, plus the one module augmentation
+ * that makes `useProjection("dshCostAudit")` type-check in client code.
  *
- * @module dsh-stats
+ * @module dsh-cost-audit
  */
 
 /** The plugin's projection key, as it appears in `SessionProjectionMap`. */
-export declare const PROJECTION_KEY: "dshStats";
+export declare const PROJECTION_KEY: "dshCostAudit";
 
 /** One billed bucket: exact token counts and a cost in CNY × 1e9. */
-export interface DshStatsBucket {
+export interface DshCostAuditBucket {
 	uncachedInputTokens: number;
 	cacheReadTokens: number;
 	cacheWriteTokens: number;
@@ -25,12 +25,12 @@ export interface DshStatsBucket {
 }
 
 /** One turn's bucket plus the model that served it. */
-export interface DshStatsTurn extends DshStatsBucket {
+export interface DshCostAuditTurn extends DshCostAuditBucket {
 	model: string;
 }
 
 /** One tool's own call count and wall time. */
-export interface DshStatsToolTiming {
+export interface DshCostAuditToolTiming {
 	calls: number;
 	ms: number;
 }
@@ -40,7 +40,7 @@ export interface DshStatsToolTiming {
  * milliseconds; `wallMs` brackets the turn (`turn/start` → `turn/end`), so
  * `wallMs - modelMs - toolMs` is harness overhead.
  */
-export interface DshStatsTiming {
+export interface DshCostAuditTiming {
 	wallMs: number;
 	/** step/start → assistant/message: model wait plus generation. */
 	modelMs: number;
@@ -55,7 +55,7 @@ export interface DshStatsTiming {
 	toolMs: number;
 	toolCalls: number;
 	/** Tool name → its own calls and wall time. */
-	tools: Record<string, DshStatsToolTiming>;
+	tools: Record<string, DshCostAuditToolTiming>;
 }
 
 /**
@@ -63,7 +63,7 @@ export interface DshStatsTiming {
  * no other figure in this deployment counts, so `summaryCostNano` is folded into
  * the session total and `count` / `shadowedTokens` drive the advisory.
  */
-export interface DshStatsCompaction {
+export interface DshCostAuditCompaction {
 	/** Successful `compaction/summary` events. */
 	count: number;
 	/** `compaction/end` events carrying an error. */
@@ -82,14 +82,14 @@ export interface DshStatsCompaction {
  * One advisory item. `code` and `severity` are stable; the wording lives in the
  * client's locale dictionaries, so `values` carries numbers and names only.
  */
-export interface DshStatsAdvice {
+export interface DshCostAuditAdvice {
 	code: string;
 	severity: "high" | "warn" | "info";
 	values: Record<string, number | string>;
 }
 
-/** The `dshStats` client view: whole-log tokens, CNY cost, timings, and advice. */
-export interface DshStatsProjection {
+/** The `dshCostAudit` client view: whole-log tokens, CNY cost, timings, and advice. */
+export interface DshCostAuditProjection {
 	/** Always `CNY` — DeepSeek's list prices are published in RMB. */
 	currency: "CNY";
 	/** Route provider last seen in the log ("" while unknown). */
@@ -97,28 +97,28 @@ export interface DshStatsProjection {
 	/** Route model last seen in the log ("" while unknown). */
 	model: string;
 	/** Whole-session billed totals. */
-	total: DshStatsBucket;
+	total: DshCostAuditBucket;
 	/** Turn number (decimal string) → that turn's billed totals. */
-	turns: Record<string, DshStatsTurn>;
+	turns: Record<string, DshCostAuditTurn>;
 	/** Operation-type timings, per turn and for the whole session. */
-	timing: { total: DshStatsTiming; turns: Record<string, DshStatsTiming> };
+	timing: { total: DshCostAuditTiming; turns: Record<string, DshCostAuditTiming> };
 	/** Compaction activity and its own bill. */
-	compaction: DshStatsCompaction;
+	compaction: DshCostAuditCompaction;
 	/** Token-saving advice, most urgent first; empty when there is nothing to say. */
-	advice: DshStatsAdvice[];
+	advice: DshCostAuditAdvice[];
 }
 
-/** The `/api/dsh-stats.balance` answer for an account read. */
-export type DshStatsBalanceResult =
+/** The `/api/dsh-cost-audit.balance` answer for an account read. */
+export type DshCostAuditBalanceResult =
 	| { ok: true; balance: { currency: string; total: number; granted: number; toppedUp: number }; fetchedAt: number }
 	| { ok: false; reason: string; status?: number; message?: string };
 
-/** The `/api/dsh-stats.balance` answer for an on-demand session fold. */
-export type DshStatsSessionResult = { ok: true; stats: DshStatsProjection } | { ok: false; reason: string; message?: string };
+/** The `/api/dsh-cost-audit.balance` answer for an on-demand session fold. */
+export type DshCostAuditSessionResult = { ok: true; stats: DshCostAuditProjection } | { ok: false; reason: string; message?: string };
 
 declare module "@deepseek-ai/dsh-session-projection/types" {
 	interface SessionProjectionMap {
 		/** Billed tokens, CNY cost, operation timings, and advisory. */
-		dshStats: DshStatsProjection;
+		dshCostAudit: DshCostAuditProjection;
 	}
 }

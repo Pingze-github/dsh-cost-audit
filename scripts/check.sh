@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dsh-stats — the project's single success criterion.
+# dsh-cost-audit — the project's single success criterion.
 #
 # Exits non-zero on any failure. Run it before every release/install.
 set -euo pipefail
@@ -26,19 +26,22 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-assert.equal(pkg.name, "dsh-stats", "package name");
+assert.ok(/^dsh-[a-z0-9-]+$/.test(pkg.name), `package name is a dsh-* id (${pkg.name})`);
 assert.equal(pkg.dsh?.bundle?.patch, "./cordis.patch.yml", "declares a bundle patch");
 assert.equal(pkg.dsh?.client?.platform, "web", "declares a web client half");
 assert.ok(existsSync(pkg.dsh.bundle.patch), "bundle patch file exists");
 assert.ok(existsSync("client.js"), "client half exists");
 
+// The entry id, the module specifier and the client bundle id are the same
+// string in three different files. Derive the expectation from package.json
+// rather than repeating it, so a rename cannot leave one of them behind.
 const patch = readFileSync(pkg.dsh.bundle.patch, "utf8");
-assert.match(patch, /id:\s*dsh-stats/, "patch mounts the dsh-stats entry");
-assert.match(patch, /name:\s*['"]?dsh-stats['"]?/, "patch names the dsh-stats package");
+assert.match(patch, new RegExp(`id:\\s*${pkg.name}\\b`), `patch mounts the ${pkg.name} entry`);
+assert.match(patch, new RegExp(`name:\\s*['"]?${pkg.name}['"]?`), `patch names the ${pkg.name} package`);
 
 const client = readFileSync("client.js", "utf8");
 assert.match(client, /window\.__ModuleLoader__\.load\(/, "client is a bootstrap-facade bundle");
-assert.match(client, /id:\s*"dsh-stats"/, "client bundle id matches the package name");
+assert.match(client, new RegExp(`id:\\s*"${pkg.name}"`), "client bundle id matches the package name");
 assert.match(client, /conversation\.chat\.assistant-actions/, "registers the per-turn slot");
 assert.match(client, /conversation\.composer\.dock/, "registers the session slot");
 

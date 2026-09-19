@@ -1,9 +1,9 @@
 /**
- * dsh-stats — host half.
+ * dsh-cost-audit — host half.
  *
  * Two host-side products, both consumed by the browser half (`./client.js`):
  *
- * 1. The `dshStats` session projection: a whole-log, replay-aware fold of the
+ * 1. The `dshCostAudit` session projection: a whole-log, replay-aware fold of the
  *    billed token buckets into per-turn and whole-session CNY cost. It rides
  *    the same durable log the harness's own `tokenUsage` / `sessionStats`
  *    units ride, so the figures stay correct no matter how much history a
@@ -19,25 +19,25 @@
  *    same unit, which covers sessions whose persisted projection checkpoint
  *    predates this plugin.
  *
- * @module dsh-stats
+ * @module dsh-cost-audit
  */
 
 import { z } from "zod";
 import { assistantStreamFirstTokenTime, lastAssistantStreamChunk } from "@deepseek-ai/dsh-llm/assistant-stream";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
 
-export const name = "dsh-stats";
+export const name = "dsh-cost-audit";
 export const inject = ["sessionProjections"];
 
 /** The projection key the browser half reads through `useProjection`. */
-const PROJECTION_KEY = "dshStats";
+const PROJECTION_KEY = "dshCostAudit";
 /**
  * The account-read endpoint's exact path. It sits under Connection's `/api`
  * prefix so the deployment's Host/Origin fence and browser auth apply, and it
  * is an exact Fetch route, so it is matched before the Gateway's `/api`
  * interceptor ever sees it.
  */
-const BALANCE_PATH = "/api/dsh-stats.balance";
+const BALANCE_PATH = "/api/dsh-cost-audit.balance";
 
 /**
  * Official DeepSeek list prices in CNY per 1,000,000 tokens, peak and
@@ -477,7 +477,7 @@ function firstTokenTimeOf(stream) {
  * live unit memoizes around it so a publication only happens on a changed
  * state reference, while an off-request fold (the cold-session read endpoint)
  * must never touch that memo.
- * @param state - a `dshStats` fold state.
+ * @param state - a `dshCostAudit` fold state.
  * @returns the client-visible value.
  */
 function statsView(state) {
@@ -1002,7 +1002,7 @@ function buildAdvice(state) {
 //#region projection
 
 /**
- * The `dshStats` projection unit. One fold over the whole durable log, so the
+ * The `dshCostAudit` projection unit. One fold over the whole durable log, so the
  * per-turn and whole-session figures a client renders are complete regardless
  * of how much history that client has paged in.
  * @param pricing - the effective price table.
@@ -1239,7 +1239,7 @@ function createBalanceReader(ctx, config) {
  * The projection pipeline only serves a unit to a client once that session has
  * a materialized cell: a session whose persisted projection checkpoint predates
  * this plugin (every session that existed before install) is served from the
- * checkpoint by the session list, and the checkpoint has no `dshStats` row — so
+ * checkpoint by the session list, and the checkpoint has no `dshCostAudit` row — so
  * until that session takes one more event the pill would stay empty. This read
  * closes that gap for exactly the session a client is looking at, reusing the
  * same unit definition so the two paths can never disagree.
@@ -1296,7 +1296,7 @@ function watchBalanceRoute(ctx, config, unit) {
     const connection = injected.connection ?? injected.get("connection");
     const register = typeof connection?.fetch?.register === "function" ? connection.fetch.register.bind(connection.fetch) : undefined;
     if (register === undefined) {
-      ctx.logger?.warn?.("dsh-stats: connection service exposes no fetch registry — the balance route stays closed");
+      ctx.logger?.warn?.("dsh-cost-audit: connection service exposes no fetch registry — the balance route stays closed");
       return;
     }
     const read = createBalanceReader(ctx, config);
@@ -1315,10 +1315,10 @@ function watchBalanceRoute(ctx, config, unit) {
               return Response.json(await read());
             },
           }),
-        "dsh-stats: balance route"
+        "dsh-cost-audit: balance route"
       );
     } catch (error) {
-      ctx.logger?.warn?.("dsh-stats: balance route registration failed: %s", error instanceof Error ? error.message : String(error));
+      ctx.logger?.warn?.("dsh-cost-audit: balance route registration failed: %s", error instanceof Error ? error.message : String(error));
       return;
     }
     gate.live = true;
@@ -1332,7 +1332,7 @@ function watchBalanceRoute(ctx, config, unit) {
 //#endregion
 
 /**
- * Mount the host half: the `dshStats` projection plus the balance channel.
+ * Mount the host half: the `dshCostAudit` projection plus the balance channel.
  * @param ctx - the owning Cordis context.
  * @param config - optional plugin config.
  */

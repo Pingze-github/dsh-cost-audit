@@ -1,10 +1,30 @@
 {
-  "name": "dsh-stats",
+  "name": "dsh-cost-audit",
   "version": "0.1.0",
   "private": true,
-  "description": "DSH Stats — per-turn and whole-session token / CNY cost / account-balance pills for the DeepSeek Harness Web GUI, in the official stats-pill form.",
+  "description": "DSH Cost Audit — per-turn and per-session token/CNY cost pills for the DeepSeek Harness Web GUI, including the compaction bill nothing else counts, plus a one-click advisor that re-measures whether its own advice actually saved money.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "cost",
+    "cny",
+    "token",
+    "observability"
+  ],
+  "license": "MIT",
+  "author": "Pingze-github",
+  "homepage": "https://github.com/Pingze-github/dsh-cost-audit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pingze-github/dsh-cost-audit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Pingze-github/dsh-cost-audit/issues"
+  },
   "type": "module",
   "main": "index.js",
+  "types": "index.d.ts",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -16,7 +36,8 @@
     "index.d.ts",
     "client.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -37,7 +58,5 @@
   },
   "dependencies": {
     "zod": "^4.4.3"
-  },
-  "license": "MIT",
-  "types": "index.d.ts"
+  }
 }

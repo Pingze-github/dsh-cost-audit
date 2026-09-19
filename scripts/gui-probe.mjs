@@ -14,7 +14,7 @@
  *                              [--seed '<key>=<json>'] [--profile <dir>]
  *                              [--report '<js expression>']
  *
- * @module dsh-stats/scripts/gui-probe
+ * @module dsh-cost-audit/scripts/gui-probe
  */
 
 import { spawn } from "node:child_process";
@@ -34,7 +34,7 @@ const sessionId = arg("--session");
 const click = arg("--click");
 const timeoutMs = Number(arg("--timeout", "45000"));
 const port = Number(arg("--port", "9333"));
-const profileDir = arg("--profile", `/tmp/dsh-stats-probe-${process.pid}`);
+const profileDir = arg("--profile", `/tmp/dsh-cost-audit-probe-${process.pid}`);
 const seedPair = arg("--seed");
 const reportExpr = arg(	"--report",
 	`JSON.stringify({

@@ -1,5 +1,5 @@
 /**
- * dsh-stats host-half checks: drive the `dshStats` projection unit over
+ * dsh-cost-audit host-half checks: drive the `dshCostAudit` projection unit over
  * synthetic session logs and assert the billed maths, the replacement/retry
  * accounting, the state/view schemas, and the change-reference contract the
  * projection framework relies on.
@@ -8,7 +8,7 @@
  * shipped code path (`apply` → `sessionProjections.register`) rather than a
  * copy of it.
  *
- * @module dsh-stats/scripts/check
+ * @module dsh-cost-audit/scripts/check
  */
 
 import assert from "node:assert/strict";
@@ -75,13 +75,13 @@ const ctx = {
 
 const RETRIES = 5;
 const mod = await import("../index.js");
-assert.equal(mod.name, "dsh-stats", "plugin name");
+assert.equal(mod.name, "dsh-cost-audit", "plugin name");
 assert.deepEqual(mod.inject, ["sessionProjections"], "declared injection");
 mod.apply(ctx, {});
 
 assert.equal(registrations.length, 1, "exactly one projection unit registered");
 const unit = registrations[0];
-assert.equal(unit.key, "dshStats", "projection key");
+assert.equal(unit.key, "dshCostAudit", "projection key");
 assert.equal(typeof unit.wire?.view, "function", "unit publishes a client view");
 
 // Connection registers a channel as a webserver route through the READING
@@ -93,7 +93,7 @@ const channelInject = injects.find((deps) => deps.includes("connection"));
 assert.ok(channelInject !== undefined, "the balance endpoint is armed through an injection");
 assert.equal(routes.length, 1, "exactly one balance route registered");
 const balanceRoute = routes[0];
-assert.equal(balanceRoute.path, "/api/dsh-stats.balance", "the route sits on Connection's /api prefix");
+assert.equal(balanceRoute.path, "/api/dsh-cost-audit.balance", "the route sits on Connection's /api prefix");
 assert.deepEqual(balanceRoute.methods, ["POST"], "the route answers POST");
 assert.equal(typeof balanceRoute.fetch, "function", "the route is servable");
 
@@ -113,7 +113,7 @@ assert.equal(typeof balanceRoute.fetch, "function", "the route is servable");
 		};
 	};
 	try {
-		const response = await balanceRoute.fetch(new Request("http://dsh.internal/api/dsh-stats.balance", { method: "POST" }));
+		const response = await balanceRoute.fetch(new Request("http://dsh.internal/api/dsh-cost-audit.balance", { method: "POST" }));
 		const value = await response.json();
 		assert.equal(value.ok, true, "the route reports success");
 		assert.deepEqual(value.balance, { currency: "CNY", total: 24.16, granted: 0, toppedUp: 24.16 }, "the balance is parsed");
@@ -121,7 +121,7 @@ assert.equal(typeof balanceRoute.fetch, "function", "the route is servable");
 		assert.equal(calls[0].url, "https://api.deepseek.com/user/balance", "the upstream endpoint");
 		assert.equal(calls[0].init.headers.authorization, "Bearer sk-test", "the resolved credential is used");
 		// The reader caches, so a second read must not hit the network again.
-		await balanceRoute.fetch(new Request("http://dsh.internal/api/dsh-stats.balance", { method: "POST" }));
+		await balanceRoute.fetch(new Request("http://dsh.internal/api/dsh-cost-audit.balance", { method: "POST" }));
 		assert.equal(calls.length, 1, "the second read is served from the cache");
 	} finally {
 		globalThis.fetch = realFetch;
@@ -144,7 +144,7 @@ assert.equal(typeof balanceRoute.fetch, "function", "the route is servable");
 		const fresh = await import(`../index.js?probe=${Date.now()}`);
 		fresh.apply(ctx, { balanceCacheMs: 0 });
 		assert.equal(routes.length, before + 1, "the re-imported plugin registers its own route");
-		const value = await (await routes.at(-1).fetch(new Request("http://dsh.internal/api/dsh-stats.balance"))).json();
+		const value = await (await routes.at(-1).fetch(new Request("http://dsh.internal/api/dsh-cost-audit.balance"))).json();
 		assert.equal(value.ok, false, "no credential is a reported failure");
 		assert.equal(value.reason, "no-api-key", "the failure names the missing credential");
 		assert.equal(fetched, false, "no upstream call is attempted without a key");
@@ -235,7 +235,7 @@ assert.equal(new Date(WEEKEND).getUTCDay(), 6, "WEEKEND must be a Saturday");
 		}
 	};
 	const call = (body) =>
-		balanceRoute.fetch(new Request("http://dsh.internal/api/dsh-stats.balance", { method: "POST", body: JSON.stringify(body) }));
+		balanceRoute.fetch(new Request("http://dsh.internal/api/dsh-cost-audit.balance", { method: "POST", body: JSON.stringify(body) }));
 	const ok = await (await call({ sessionId: "session-known" })).json();
 	assert.equal(ok.ok, true, "the on-demand fold reports success");
 	assert.equal(ok.stats.total.costNano, 1000 * 2 * 1000 + 1000000 * 0.04 * 1000 + 1000 * 8 * 1000, "the fold prices the whole log");
@@ -831,4 +831,4 @@ function toolCalls(count, name, args, ms, time) {
 
 //#endregion
 
-process.stdout.write(`check: dsh-stats host half OK (${registrations.length} projection units, ${routes.length} balance routes)\n`);
+process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} balance routes)\n`);
