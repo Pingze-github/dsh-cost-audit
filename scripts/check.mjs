@@ -916,4 +916,54 @@ function toolCalls(count, name, args, ms, time) {
 
 //#endregion
 
+{
+	// The one-click compaction is judged on the *live* context, not on the
+	// lifetime share that raised the tip: a summarize call costs real money, so
+	// pressing it after the context has already been shrunk buys nothing.
+	const big = { inputTokens: 400000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 };
+	const small = { inputTokens: 40000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 };
+	const time = PEAK;
+	const settled = fold([route("deepseek-flash"), settle(1, 1, big, time), settle(1, 2, small, time + 1000)]).view;
+	assert.equal(settled.metrics.lastPromptTokens, 40000, "the last measured prompt is the live context size");
+	assert.equal(settled.metrics.peakPromptTokens, 400000, "the peak prompt is remembered");
+	assert.equal(settled.metrics.compactedSinceRequest, false, "nothing has compacted yet");
+}
+
+{
+	// A tip that fired on history carries what its button must be judged on, and
+	// a compaction makes that reading stale.
+	// `settlements` emits step/start too, which is what lets the settlement close
+	// its step — without it the model-call count stays zero and no tip fires.
+	const events = [route("deepseek-flash"), ...settlements(40, PEAK)];
+	const tip = fold(events).view.advice.find((item) => item.code === "context-reread");
+	assert.ok(tip !== undefined, "the re-read tip fires on a re-read-heavy session");
+	assert.equal(tip.values.contextTokens, 101000, "the tip carries the live context size");
+	assert.equal(tip.values.peakContextTokens, 101000, "and the peak it came down from");
+	assert.equal(tip.values.compactedSinceRequest, 0, "and whether a compaction has run since that reading");
+
+	const compaction = {
+		type: "compaction/summary",
+		seq: 900,
+		time: PEAK + 120000,
+		data: {
+			compactionId: "c1",
+			summary: [],
+			shadowedRange: { start: 0, end: 1 },
+			shadowedSeqs: [0],
+			shadowedTokenCount: 10,
+			provider: "deepseek-official",
+			model: "deepseek-flash",
+			rawOutput: [],
+			llmStreamCall: true,
+			usage: { inputTokens: 1000, outputTokens: 10 }
+		}
+	};
+	const after = fold(events.concat([compaction])).view;
+	assert.equal(after.metrics.compactedSinceRequest, true, "a compaction makes the measured context stale");
+	assert.equal(after.compaction.lastAt, PEAK + 120000, "the compaction's instant is remembered");
+	assert.ok(after.compaction.lastCostNano > 0, "and what it cost, as the price of pressing the button again");
+	const stale = after.advice.find((item) => item.code === "context-reread");
+	assert.equal(stale.values.compactedSinceRequest, 1, "the tip reports the staleness, so the button is withheld");
+}
+
 process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} connection routes)\n`);

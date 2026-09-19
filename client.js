@@ -183,6 +183,8 @@ window.__ModuleLoader__.load({
 			"advice.toolFailures.instruction": "{tool} 已经连续失败多次。停下来把完整错误读一遍，说明根因和下一步方案，不要重复同样的调用。",
 			"advice.cacheHitDrop.action": "让它排查缓存",
 			"advice.cacheHitDrop.instruction": "本会话的缓存命中率偏低。查清楚是什么在每一轮改变请求头或前缀（AGENTS.md、技能注入、系统提示），找出并说明。",
+			"advice.contextReread.note": "当前上下文 {context} token（上次实测）—— 压缩的收益看的是这个数，不是历史占比",
+			"advice.contextReread.pointless": "现在再压基本是白花钱：刚压过（上次花了 {cost}），或上下文已经不大（{context} token）。等它再涨回来，这个按钮会自己回来。",
 			"advice.contextReread.ran": "已执行 /compact",
 			"advice.fragmentedTools.ran": "已发出合并指令",
 			"advice.repeatedTarget.ran": "已发出停止重读的指令",
@@ -321,6 +323,8 @@ window.__ModuleLoader__.load({
 			"advice.toolFailures.instruction": "{tool} has failed repeatedly. Stop, read the full error, and state the root cause and your next plan; do not repeat the same call.",
 			"advice.cacheHitDrop.action": "Ask it to investigate",
 			"advice.cacheHitDrop.instruction": "This session's cache hit rate is low. Find out what changes the request head or prefix every turn (AGENTS.md, skill injection, system prompt) and report it.",
+			"advice.contextReread.note": "Current context: {context} tokens as last measured — what compaction buys depends on this, not on the lifetime share",
+			"advice.contextReread.pointless": "Compacting now would buy nothing: one already ran (it cost {cost}) or the context is already small ({context} tokens). The button comes back once it grows again.",
 			"advice.contextReread.ran": "Ran /compact",
 			"advice.fragmentedTools.ran": "Sent the merge instruction",
 			"advice.repeatedTarget.ran": "Sent the stop-re-reading instruction",
@@ -420,6 +424,7 @@ window.__ModuleLoader__.load({
 			".dshstats-verdict-improved .dshstats-verdictState{color:var(--dsw-alias-state-success-primary)}",
 			".dshstats-verdict-worse .dshstats-verdictState{color:var(--dsw-alias-state-error-primary)}",
 			".dshstats-verdictRan{color:var(--dsw-alias-label-secondary)}",
+			".dshstats-adviceNote{color:var(--dsw-alias-label-caption);line-height:1.35}",
 			".dshstats-reportTotal{display:flex;gap:6px;align-items:baseline;font-weight:500}",
 			".dshstats-reportRow{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline}",
 			".dshstats-reportLabel{color:var(--dsw-alias-label-secondary)}",
@@ -1030,6 +1035,32 @@ window.__ModuleLoader__.load({
 			// burn rate, or is below a floor that is small in absolute terms.
 			if (balance.balance.total >= Math.max((costNano / NANO) * 5, 20)) return null;
 			return { code: "balance-low", severity: "warn", values: { balance: balance.balance.total, costNano } };
+		}
+
+		/**
+		 * Whether the one-click compaction would be money for nothing.
+		 *
+		 * The tip is raised by a *lifetime* share, but its button acts on the
+		 * future, and a summarize call is not free — it re-reads the whole
+		 * context at the miss rate (¥0.42 on the session this was written for).
+		 * So the button is shown only while compacting can still buy something:
+		 * if a compaction has run since the last measured request, or the
+		 * context has already come down from its peak, pressing it pays for a
+		 * second summary to remove context that is no longer there.
+		 *
+		 * The tip itself stays — the diagnosis is still true — and the button
+		 * comes back on its own once the context grows again.
+		 *
+		 * @param code - the advice code.
+		 * @param values - the host's raw values.
+		 * @returns whether the action should be withheld.
+		 */
+		function compactionPointless(code, values) {
+			if (code !== "context-reread" || values === undefined) return false;
+			if (values.compactedSinceRequest === 1) return true;
+			const peak = values.peakContextTokens ?? 0;
+			const now = values.contextTokens ?? 0;
+			return peak > 0 && now < peak * 0.5;
 		}
 
 		/**
@@ -1765,6 +1796,14 @@ window.__ModuleLoader__.load({
 					h(
 						"div",
 						{ className: "dshstats-adviceFoot" },
+						// The number the button acts on, shown before it is pressed.
+						verdict === null && item.code === "context-reread" && item.values?.contextTokens !== undefined
+							? h(
+									"span",
+									{ className: "dshstats-adviceNote" },
+									t("advice.contextReread.note", { context: formatCompact(item.values.contextTokens, t) })
+								)
+							: null,
 						verdict !== null
 							? h(
 									"div",
@@ -1792,17 +1831,26 @@ window.__ModuleLoader__.load({
 									verdict.remaining === null ? null : h("span", { className: "dshstats-verdictRemaining" }, verdict.remaining)
 								)
 							: action
-								? h(
-										"button",
-										{
-											type: "button",
-											className: "dshstats-act",
-											disabled: busy,
-											title: busy ? t("advice.blocked") : undefined,
-											onClick: () => run(item)
-										},
-										t(`advice.${segment}.action`)
-									)
+								? compactionPointless(item.code, item.values)
+									? h(
+											"span",
+											{ className: "dshstats-manual" },
+											t("advice.contextReread.pointless", {
+												context: formatCompact(item.values.contextTokens ?? 0, t),
+												cost: formatCny(item.values.lastCompactionCostNano ?? 0)
+											})
+										)
+									: h(
+											"button",
+											{
+												type: "button",
+												className: "dshstats-act",
+												disabled: busy,
+												title: busy ? t("advice.blocked") : undefined,
+												onClick: () => run(item)
+											},
+											t(`advice.${segment}.action`)
+										)
 								: h("span", { className: "dshstats-manual" }, t(`advice.${segment}.manual`))
 					)
 				);

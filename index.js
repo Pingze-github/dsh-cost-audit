@@ -319,6 +319,10 @@ const compactionShape = {
   summaryCostNano: z.number().int().nonnegative(),
   /** The user-triggered share of `summaryCostNano`. */
   manualCostNano: z.number().int().nonnegative(),
+  /** When the last compaction ran, or null when none has. */
+  lastAt: z.number().nonnegative().nullable(),
+  /** What that last compaction's own summarize call billed. */
+  lastCostNano: z.number().int().nonnegative(),
   /** Tokens those summarization calls billed. */
   summaryTokens: z.number().int().nonnegative(),
 };
@@ -334,6 +338,8 @@ const ZERO_COMPACTION = Object.freeze({
   summaryCostNano: 0,
   manualCostNano: 0,
   summaryTokens: 0,
+  lastAt: null,
+  lastCostNano: 0,
 });
 
 /** The bounded raw tallies the advisor reads. State only — never on the wire. */
@@ -354,6 +360,17 @@ const signalShape = {
   repeatCalls: z.number().int().nonnegative(),
   /** Every tool failure, including names the bounded per-tool table evicted. */
   toolErrorTotal: z.number().int().nonnegative(),
+  /**
+   * Prompt tokens of the most recently measured request — the live context
+   * size. The one-click compaction has to be judged on this, not on the
+   * lifetime re-read share that raised the tip: a summarize call is not free,
+   * and compacting an already-compacted context buys nothing.
+   */
+  lastPromptTokens: z.number().int().nonnegative(),
+  /** The largest prompt this session ever sent, to tell "small yet" from "small again". */
+  peakPromptTokens: z.number().int().nonnegative(),
+  /** Whether a compaction ran after that measurement, which makes it a stale reading. */
+  compactedSinceRequest: z.boolean(),
 };
 
 const signalsSchema = z.object(signalShape).strict();
@@ -370,6 +387,9 @@ const ZERO_SIGNALS = Object.freeze({
   steps: 0,
   repeatCalls: 0,
   toolErrorTotal: 0,
+  lastPromptTokens: 0,
+  peakPromptTokens: 0,
+  compactedSinceRequest: false,
 });
 
 /** Tools whose call means the session actually produced or shipped something. */
@@ -799,6 +819,15 @@ function foldSettlement(state, event, pricing) {
     turnModels,
     slots: { ...state.slots, [key]: bucket },
     lastSlot: key,
+    signals: {
+      ...state.signals,
+      lastPromptTokens: bucket.uncachedInputTokens + bucket.cacheReadTokens + bucket.cacheWriteTokens,
+      peakPromptTokens: Math.max(
+        state.signals.peakPromptTokens,
+        bucket.uncachedInputTokens + bucket.cacheReadTokens + bucket.cacheWriteTokens
+      ),
+      compactedSinceRequest: false,
+    },
     days: addDay(state.days, event.time, {
       costNano: dayCost,
       ...parts,
@@ -906,10 +935,14 @@ function foldCompactionSummary(state, event, pricing) {
     summaryCostNano: state.compaction.summaryCostNano,
     manualCostNano: state.compaction.manualCostNano,
     summaryTokens: state.compaction.summaryTokens,
+    lastAt: event.time,
+    lastCostNano: 0,
   };
   // Either way the marker is spent: an unclaimed one must not leak into the
   // next automatic compaction.
-  const base = { ...state, compaction, pendingCompactAt: null };
+  // The context is about to shrink, so the last measured prompt size no longer
+  // describes this session; the tip stays, its one-click action does not.
+  const base = { ...state, compaction, pendingCompactAt: null, signals: { ...state.signals, compactedSinceRequest: true } };
   if (usage !== null && typeof usage === "object") {
     const model = typeof data.model === "string" && data.model !== "" ? data.model : state.model;
     const bucket = priceUsage(usage, familyOf(model), isPeak(event.time), pricing);
@@ -917,6 +950,7 @@ function foldCompactionSummary(state, event, pricing) {
       compaction.summaryCostNano += bucket.costNano;
       compaction.summaryTokens += bucket.pricedTokens + bucket.unpricedTokens;
       if (manual) compaction.manualCostNano += bucket.costNano;
+      compaction.lastCostNano = bucket.costNano;
       const peak = isPeak(event.time);
       const parts = subjectCosts(
         { uncached: bucket.uncachedInputTokens, cacheRead: bucket.cacheReadTokens, cacheWrite: bucket.cacheWriteTokens, output: bucket.outputTokens },
@@ -982,6 +1016,9 @@ function statsMetrics(state) {
     compactions: state.compaction.count,
     stepsSinceProductive: state.signals.stepsSinceProductive,
     productiveCalls: state.signals.productiveCalls,
+    lastPromptTokens: state.signals.lastPromptTokens,
+    peakPromptTokens: state.signals.peakPromptTokens,
+    compactedSinceRequest: state.signals.compactedSinceRequest,
   };
 }
 
@@ -1001,6 +1038,9 @@ const metricsSchema = z
     compactions: z.number().int().nonnegative(),
     stepsSinceProductive: z.number().int().nonnegative(),
     productiveCalls: z.number().int().nonnegative(),
+    lastPromptTokens: z.number().int().nonnegative(),
+    peakPromptTokens: z.number().int().nonnegative(),
+    compactedSinceRequest: z.boolean(),
   })
   .strict();
 
@@ -1029,7 +1069,18 @@ function buildAdvice(state) {
       advice.push({
         code: "context-reread",
         severity: "warn",
-        values: { percent: Math.round(share * 100), costNano: total.cacheReadCostNano, totalCostNano: total.costNano, calls: modelCalls },
+        values: {
+          percent: Math.round(share * 100),
+          costNano: total.cacheReadCostNano,
+          totalCostNano: total.costNano,
+          calls: modelCalls,
+          // What the one-click action has to be judged on. `compactedSinceRequest`
+          // travels as 0/1 because the wire only accepts numbers and strings.
+          contextTokens: signals.lastPromptTokens,
+          peakContextTokens: signals.peakPromptTokens,
+          compactedSinceRequest: signals.compactedSinceRequest ? 1 : 0,
+          lastCompactionCostNano: state.compaction.lastCostNano,
+        },
       });
     }
   }

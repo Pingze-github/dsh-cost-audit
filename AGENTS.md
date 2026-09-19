@@ -151,6 +151,17 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   back — every entry then re-resolves its path, and the stale one resolves to
   nothing and drops out. A `dsh web` restart does the same and kills the session
   hosting it.
+- **A tip diagnoses history; its button acts on the present.** The re-read tip is
+  raised by a *lifetime* share, but its one-click `/compact` spends real money
+  (¥0.42 on the session where this was found) and only pays while the context is
+  still big **now** — pressed right after an automatic or manual compaction it
+  pays for a second summary to remove context that is already gone. The fold
+  therefore records `lastPromptTokens` / `peakPromptTokens` /
+  `compactedSinceRequest`, and the button is withheld (with the reason printed)
+  while a compaction has run since the last measured request or the context sits
+  under half its peak. The diagnosis stays; the button returns by itself when the
+  context grows back. Audit every actionable tip this way — the others only steer
+  the agent, this one bills.
 - **An advisor must be closed under its own advice.** The re-read tip
   recommends `/compact`; the churn tip fired at `compaction.count >= 2`. So
   doing what the panel said produced a second compaction and an immediate
