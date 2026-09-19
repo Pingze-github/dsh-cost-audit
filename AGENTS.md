@@ -72,6 +72,17 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   therefore negative-margin work, and the lifted row must be
   `pointer-events: none` (with the pill re-enabled) or it swallows the official
   pills' hover and clicks.
+- **A padding cannot be negative, a margin can.** The indent that lands the pill
+  beside the official content is `(officialContent + gap - pillWidth) / 2`, which
+  is legitimately negative when this pill is wider than the official pills;
+  `padding-left` would clamp it to 0 and put the pill at the band's left edge.
+  It rides `margin-left` on the pill instead.
+- **Centring the pair needs the official row moved.** The official pills stay
+  centred on their own axis, so a second pill beside them always reads as
+  off-centre. The plugin shifts the official node left by
+  `(gap + pillWidth) / 2` with an inline `translateX` and clears it on unmount
+  and whenever it falls back to its own line. React never set a `style` on that
+  node, so the shift survives the official component's re-renders.
 - `dsh plugin add` only writes the profile manifest; a bundle becomes a profile
   layer at boot **unless** `dsh-hotswap` is mounted, which watches
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or

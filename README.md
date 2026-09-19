@@ -129,13 +129,16 @@ browser page** to pick up the new client bundle.
   It carries no build step: it is a hand-written bundle in the
   `window.__ModuleLoader__.load({ id, factory })` form, so the package installs
   straight from a checkout.
-- **Session-row placement** is measured, not hard-coded. The composer dock
-  stacks its slot entries and the official stats row is a centred flex row this
-  plugin does not own, so the row is lifted by the official row's measured
-  height and its content indented to start where the official content ends.
-  A longer official label, a changed font size, or a resized window all land in
-  the right place; when the pill would not fit beside the official pills, the
-  row falls back to a centred line of its own instead of overlapping them.
+- **Session-row placement** is measured, not hard-coded, and the pair stays
+  centred. The composer dock stacks its slot entries and the official stats row
+  is a centred flex row this plugin does not own, so three things are measured:
+  the row is lifted by the official row's height, its content indented to start
+  where the official content ends, and the official row is shifted left by half
+  of what this pill adds (a `translateX` this plugin sets and clears, never a
+  layout change) so the two read as one centred group. A longer official label,
+  a changed font size, or a resized window all land in the right place; when the
+  group would not fit in the band, the row falls back to a centred line of its
+  own with the official row left exactly as the harness drew it.
 
 ## Layout
 

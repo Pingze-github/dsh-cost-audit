@@ -161,8 +161,11 @@ window.__ModuleLoader__.load({
 			// official row's measured height and its content indented past the
 			// official pills. `pointer-events` keeps the official pills clickable
 			// underneath the lifted row.
-			".dshstats-row[data-dsh-stats-inline]{max-width:none;height:var(--dshstats-lift,auto);margin:calc(-1 * var(--dshstats-lift,0px)) 0 0;padding:0 0 0 var(--dshstats-indent,0px);justify-content:flex-start;pointer-events:none}",
-			".dshstats-row[data-dsh-stats-inline]>*{pointer-events:auto}",
+			".dshstats-row[data-dsh-stats-inline]{max-width:none;height:var(--dshstats-lift,auto);margin:calc(-1 * var(--dshstats-lift,0px)) 0 0;padding:0;justify-content:flex-start;pointer-events:none}",
+			// A margin (not padding) carries the indent: it may legitimately be
+			// negative when this pill is wider than the official content, and
+			// padding would clamp that to zero.
+			".dshstats-row[data-dsh-stats-inline]>*{pointer-events:auto;margin-left:var(--dshstats-indent,0px)}",
 			".dshstats-pill{box-sizing:border-box;max-width:100%;color:var(--dsw-alias-label-tertiary);font:inherit;font-variant-numeric:tabular-nums;line-height:inherit;white-space:nowrap;background:0 0;border:none;border-radius:24px;align-items:center;gap:6px;padding:1px 8px;display:inline-flex;cursor:pointer}",
 			".dshstats-pill svg{flex:none;width:14px;height:14px}",
 			".dshstats-pill:hover,.dshstats-pill[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}",
@@ -688,29 +691,41 @@ window.__ModuleLoader__.load({
 		const INLINE_ATTR = "data-dsh-stats-inline";
 
 		/**
-		 * Share the official session-stats line.
+		 * Share the official session-stats line, centred.
 		 *
-		 * The composer dock stacks its slot entries, and the official stats row
+		 * The composer dock stacks its slot entries and the official stats row
 		 * is a centred flex row this plugin does not own. Sharing its line means
-		 * lifting this row by the official row's *measured* height and indenting
-		 * its content to start where the official content ends — measured too,
-		 * so a longer official label, a changed font size, or a resized window
-		 * all land in the right place. When the pill would not fit beside the
-		 * official pills, the row stays a centred line of its own instead of
-		 * overlapping them.
+		 * three measured things: lift this row by the official row's height,
+		 * indent its content to start where the official content ends, and give
+		 * the official row back half of what this pill adds — a horizontal
+		 * `translateX` on the official node, cleared whenever this pill goes
+		 * away — so the pair stays centred on the axis the official row already
+		 * sat on. Measuring means a longer official label, a changed font size,
+		 * or a resized window all land in the right place, and when the pair
+		 * would not fit in the band the whole thing falls back to a centred line
+		 * of its own rather than overlapping.
 		 * @param rowRef - ref on the row being placed.
 		 */
 		function useInlineWithStats(rowRef) {
+			/** The official node currently carrying this plugin's centring shift. */
+			const shifted = react.useRef(null);
 			const place = react.useCallback(() => {
 				const row = rowRef.current;
 				if (row === null) return;
-				const official = document.querySelector("[data-composer-stats]");
-				const pill = row.firstElementChild;
+				const unshift = () => {
+					if (shifted.current !== null) {
+						shifted.current.style.transform = "";
+						shifted.current = null;
+					}
+				};
 				const clear = () => {
 					row.removeAttribute(INLINE_ATTR);
 					row.style.removeProperty("--dshstats-lift");
 					row.style.removeProperty("--dshstats-indent");
+					unshift();
 				};
+				const official = document.querySelector("[data-composer-stats]");
+				const pill = row.firstElementChild;
 				if (official === null || pill === null || official.getBoundingClientRect().height === 0) {
 					clear();
 					return;
@@ -718,23 +733,30 @@ window.__ModuleLoader__.load({
 				const gap = Number.parseFloat(getComputedStyle(official).columnGap) || 0;
 				const children = [...official.children];
 				const content = children.reduce((total, child) => total + child.getBoundingClientRect().width, 0) + gap * Math.max(0, children.length - 1);
+				const pillWidth = pill.getBoundingClientRect().width;
 				// The slot wrappers between this row and the composer stack are
 				// `display: contents`, so they measure 0 — walk out to the first
 				// ancestor that actually owns the band.
 				let band = row.parentElement;
 				while (band !== null && band.getBoundingClientRect().width === 0) band = band.parentElement;
 				const halfBand = (band === null ? row.getBoundingClientRect().width : band.getBoundingClientRect().width) / 2;
-				if (content / 2 + gap + pill.getBoundingClientRect().width > halfBand - 4) {
+				if ((content + gap + pillWidth) / 2 > halfBand - 4) {
 					clear();
 					return;
 				}
 				row.setAttribute(INLINE_ATTR, "");
 				const lift = `${official.getBoundingClientRect().height}px`;
 				// `50%` is this row's own centre, which is the official row's
-				// centre too — the two rows are centred in the same band.
-				const indent = `calc(50% + ${content / 2 + gap}px)`;
+				// centre too — the two rows are centred in the same band. The
+				// official row then gives up half of what this pill adds, so the
+				// pair's centre stays on that axis and this pill's start is the
+				// group's left edge plus the official content.
+				const indent = `calc(50% + ${String((content + gap - pillWidth) / 2)}px)`;
 				if (row.style.getPropertyValue("--dshstats-lift") !== lift) row.style.setProperty("--dshstats-lift", lift);
 				if (row.style.getPropertyValue("--dshstats-indent") !== indent) row.style.setProperty("--dshstats-indent", indent);
+				const shift = `translateX(${String(-(gap + pillWidth) / 2)}px)`;
+				if (official.style.transform !== shift) official.style.transform = shift;
+				shifted.current = official;
 			}, [rowRef]);
 			react.useLayoutEffect(place);
 			react.useEffect(() => {
@@ -748,6 +770,11 @@ window.__ModuleLoader__.load({
 				return () => {
 					window.removeEventListener("resize", place);
 					observer?.disconnect();
+					// Never leave the official row shifted on this plugin's behalf.
+					if (shifted.current !== null) {
+						shifted.current.style.transform = "";
+						shifted.current = null;
+					}
 				};
 			}, [place, rowRef]);
 		}
