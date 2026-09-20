@@ -188,12 +188,70 @@ if [ "$GUI" = "1" ]; then
   SESSION="${DSH_STATS_SESSION:-$(ls -t "$SESSIONS_ROOT/$WORKSPACE_DIR"/session-*/session.v3.jsonl.zstd 2>/dev/null | head -1 | xargs -r dirname | xargs -r basename)}"
   [ -z "$SESSION" ] && { echo "smoke: no session in this workspace to render" >&2; exit 1; }
   echo "smoke: session $SESSION"
+  # Both views, not just the dock. A view that throws is caught by the slot
+  # boundary, so the card simply vanishes and nothing else notices — the bill
+  # view died exactly that way once, off the back of a chart change, and the
+  # only thing that saw it was this probe's console-error list.
+  GUI_REPORT="${TMPDIR:-/tmp}/dsh-cost-audit-gui.json"
   node scripts/gui-probe.mjs --url "$TOKEN_URL" --session "$SESSION" \
     --wait "[data-dsh-stats-session]" \
-    --report 'JSON.stringify({
-      pills: [...document.querySelectorAll(".dshstats-pill")].map((n) => n.innerText),
-      bootFailure: document.body.innerText.includes("Failed to load plugins")
-    })'
+    --report 'new Promise((r) => {
+      const done = (extra) =>
+        r(JSON.stringify(Object.assign({
+          pills: [...document.querySelectorAll(".dshstats-pill")].map((n) => n.innerText),
+          bootFailure: document.body.innerText.includes("Failed to load plugins")
+        }, extra)));
+      const pill =
+        document.querySelector(".dshstats-pill-warn") ??
+        document.querySelector(".dshstats-pill-high") ??
+        document.querySelector(".dshstats-pill-info");
+      if (!pill) { done({ bill: "no-advice-pill" }); return; }
+      pill.click();
+      const pick = (label) => [...document.querySelectorAll(".dshstats-switchButton")].find((n) => n.innerText === label);
+      const t0 = Date.now();
+      const step = () => {
+        const bill = pick("Whole-account bill");
+        if (!bill) { if (Date.now() - t0 > 15000) { done({ bill: "no-switch" }); return; } setTimeout(step, 200); return; }
+        bill.click();
+        setTimeout(() => {
+          const thirty = pick("30 days");
+          if (thirty) thirty.click();
+          setTimeout(() => done({
+            bill: Boolean(document.querySelector(".dshstats-chart")),
+            series: document.querySelectorAll(".dshstats-series").length,
+            legend: document.querySelectorAll(".dshstats-legendItem").length
+          }), 900);
+        }, 3000);
+      };
+      step();
+    })' > "$GUI_REPORT"
+  DSH_STATS_GUI_REPORT="$GUI_REPORT" python3 - <<'PY2'
+import json, os, re, sys
+
+raw = open(os.environ["DSH_STATS_GUI_REPORT"]).read()
+try:
+    parsed = json.loads(raw)
+except json.JSONDecodeError:
+    match = re.search(r'\{\s*"report":\s*"(.*?)",\s*"consoleErrors":\s*(\[.*\])\s*\}\s*$', raw, re.S)
+    if match is None:
+        print("smoke: FAIL the gui probe produced no report", file=sys.stderr)
+        print(raw[-400:], file=sys.stderr)
+        sys.exit(1)
+    parsed = {"report": json.loads('"' + match.group(1) + '"'), "consoleErrors": json.loads(match.group(2))}
+
+errors = parsed.get("consoleErrors") or []
+if errors:
+    print("smoke: FAIL console error: %s" % str(errors[0]).split("\n")[0], file=sys.stderr)
+    sys.exit(1)
+report = json.loads(parsed["report"])
+if report.get("bootFailure"):
+    print("smoke: FAIL the plugin list did not boot", file=sys.stderr)
+    sys.exit(1)
+if report.get("bill") is True and report.get("series", 0) < 1:
+    print("smoke: FAIL the bill view rendered no series", file=sys.stderr)
+    sys.exit(1)
+print("smoke: pills %s · bill %s · series %s · legend %s" % (report.get("pills"), report.get("bill"), report.get("series"), report.get("legend")))
+PY2
 fi
 
 echo "smoke: all green"

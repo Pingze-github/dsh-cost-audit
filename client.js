@@ -125,7 +125,7 @@ window.__ModuleLoader__.load({
 			"report.today": "今天",
 			"report.days": "{days} 天",
 			"report.loading": "账单还在读取（要把这台机器上每个会话都折一遍，头一次会慢一两秒）",
-			"report.trend": "单位工作量花费 · 最近 {days} 天（有活动 {active} 天）",
+			"report.trend": "单位工作量花费 · 窗口 {days} 天 · 有数据 {active} 天",
 			"report.trendFlat": "各线按自身范围拉伸 · 只看涨跌方向",
 			"report.trendFew": "趋势至少需要 2 天有活动的数据 —— 「今天」只有 1 天，切到 7 天或 30 天",
 			"adviceMoney": "{cost} · {share}%",
@@ -280,7 +280,7 @@ window.__ModuleLoader__.load({
 			"report.today": "Today",
 			"report.days": "{days} days",
 			"report.loading": "Reading the bill — it folds every session on this machine, so the first read takes a second or two",
-			"report.trend": "Cost per unit of work · last {days} days ({active} active)",
+			"report.trend": "Cost per unit of work · {days}-day window · {active} days with data",
 			"report.trendFlat": "each line stretched to its own range · read the direction",
 			"report.trendFew": "A trend needs at least 2 days with activity — Today is one; try 7 or 30 days",
 			"adviceMoney": "{cost} · {share}%",
@@ -467,7 +467,8 @@ window.__ModuleLoader__.load({
 			".dshstats-chart{margin-bottom:10px}",
 			".dshstats-chartHead{display:flex;justify-content:space-between;gap:8px;align-items:baseline;color:var(--dsw-alias-label-caption)}",
 			".dshstats-chart svg{display:block;width:100%;height:46px;margin:4px 0 6px}",
-			".dshstats-series{stroke:var(--dsh-series)}",
+			".dshstats-series{stroke:var(--dsh-series);fill:var(--dsh-series)}",
+			".dshstats-dot{stroke:none}",
 			".dshstats-ink-0{--dsh-series:var(--dsw-alias-brand-primary)}",
 			".dshstats-ink-1{--dsh-series:var(--dsw-alias-state-success-primary)}",
 			".dshstats-ink-2{--dsh-series:var(--dsw-alias-state-business-primary)}",
@@ -1704,9 +1705,17 @@ window.__ModuleLoader__.load({
 				date.setDate(date.getDate() - back);
 				dates.push(reportDayKey(date));
 			}
+			// The axis starts at the first day that has anything. A window that
+			// begins before this machine had any data spends most of its width on
+			// empty days and squeezes the line into the right-hand third, which reads
+			// as a bug and was reported as one. The *window* is what was asked for,
+			// the *axis* is what can be drawn, and the caption says both.
+			const first = dates.findIndex((key) => days[key] !== undefined);
+			if (first === -1) return null;
+			const span = dates.slice(first);
 			const drawn = [];
 			for (const series of TREND_SERIES) {
-				const values = dates.map((key) => {
+				const values = span.map((key) => {
 					const day = days[key];
 					return day === undefined ? undefined : series.value(day);
 				});
@@ -1720,9 +1729,12 @@ window.__ModuleLoader__.load({
 			const width = 260;
 			const height = 46;
 			const pad = 6;
-			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, dates.length - 1);
+			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, span.length - 1);
 			const atY = (entry, value) => height - pad - ((value - entry.low) / entry.spread) * (height - pad * 2);
-			const active = dates.filter((key) => days[key] !== undefined && days[key].turns > 0).length;
+			// `span` still contains the gap days after the first one with data, so this
+			// has to guard: reading `.turns` off a gap threw, the slot boundary caught
+			// it, and the whole card disappeared.
+			const active = span.filter((key) => days[key] !== undefined && days[key].turns > 0).length;
 			return h(
 				"div",
 				{ className: "dshstats-chart" },
@@ -1738,24 +1750,42 @@ window.__ModuleLoader__.load({
 					drawn.map((entry) => {
 						let path = "";
 						let pen = false;
+						let startedAt = -1;
+						const lone = [];
 						entry.values.forEach((value, index) => {
 							if (value === undefined || !Number.isFinite(value)) {
+								// A run of exactly one day is a `M` with no `L`, which draws
+								// nothing at all — so it becomes a dot below.
+								if (pen && index - startedAt === 1) lone.push(startedAt);
 								pen = false;
 								return;
 							}
+							if (!pen) startedAt = index;
 							path += `${pen ? "L" : "M"}${atX(index).toFixed(1)} ${atY(entry, value).toFixed(1)} `;
 							pen = true;
 						});
-						return h("path", {
-							key: entry.series.key,
-							className: `dshstats-series ${entry.series.ink}`,
-							d: path.trim(),
-							fill: "none",
-							strokeWidth: 1.5,
-							vectorEffect: "non-scaling-stroke",
-							strokeLinejoin: "round",
-							strokeLinecap: "round"
-						});
+						if (pen && entry.values.length - startedAt === 1) lone.push(startedAt);
+						return h(
+							"g",
+							{ key: entry.series.key, className: `dshstats-series ${entry.series.ink}` },
+							h("path", {
+								d: path.trim(),
+								fill: "none",
+								strokeWidth: 1.5,
+								vectorEffect: "non-scaling-stroke",
+								strokeLinejoin: "round",
+								strokeLinecap: "round"
+							}),
+							lone.map((index) =>
+								h("circle", {
+									key: `dot:${String(index)}`,
+									className: "dshstats-dot",
+									cx: atX(index).toFixed(1),
+									cy: atY(entry, entry.values[index]).toFixed(1),
+									r: 1.8
+								})
+							)
+						);
 					})
 				),
 				h(
