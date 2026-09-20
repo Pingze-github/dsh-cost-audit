@@ -1159,8 +1159,28 @@ function buildAdvice(state) {
     }
   }
 
+  // Every tip now declares what it is about in money, because the useful
+  // question is not "is this a problem" but "is this worth my attention": a
+  // pattern that accounts for ¥0.10 of a ¥200 session is noise, and acting on it
+  // can cost more than it saves. Tips whose leak is not a bill line say so
+  // (`priced: 0`) rather than inventing a figure — only the re-read bill and the
+  // summarize calls can be read straight off the log.
+  for (const item of advice) {
+    if (item.values.costNano === undefined) item.values.costNano = 0;
+    if (item.values.share === undefined) {
+      item.values.share = total.costNano === 0 ? 0 : Math.round((item.values.costNano / total.costNano) * 100);
+    }
+    if (item.values.priced === undefined) item.values.priced = item.values.costNano > 0 ? 1 : 0;
+  }
+  // Two bands. "Act now" is not a money question — a tool failing in a loop and a
+  // balance about to run out are about being stuck, not about spend, so those
+  // lead whatever they cost. Everything else is ranked by the money involved,
+  // because a ¥0.10 pattern must not outrank a ¥50 one for sounding worse.
   const rank = { high: 0, warn: 1, info: 2 };
-  return advice.sort((left, right) => (rank[left.severity] ?? 3) - (rank[right.severity] ?? 3));
+  return advice.sort((left, right) => {
+    const urgent = Number(right.severity === "high") - Number(left.severity === "high");
+    return urgent || right.values.costNano - left.values.costNano || (rank[left.severity] ?? 3) - (rank[right.severity] ?? 3);
+  });
 }
 
 //#endregion

@@ -151,6 +151,26 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   back — every entry then re-resolves its path, and the stale one resolves to
   nothing and drops out. A `dsh web` restart does the same and kills the session
   hosting it.
+- **A panel must be capped, or a long list runs off the top of the screen.** The
+  advice panel is anchored above its pill, so once the tip list grew past the
+  viewport its own top went off-screen and the earliest tips became unreachable —
+  not scrolled to, gone. `.dshstats-panel` is now a flex column capped at
+  `min(72vh, 620px)` with `.dshstats-panelBody` scrolling inside it and the title
+  pinned. Any new list in a panel inherits that; do not add one outside the body.
+- **Order tips by the money at stake, with "act now" as the only exception.** A
+  tip that accounts for ¥0.10 of a ¥200 session is noise, and acting on it can
+  cost more than it saves, so the list leads with whatever costs the most.
+  Severity is not the axis — except for `high` (`tool-failures`, `balance-low`),
+  which are about being *stuck*, not about spending, and lead whatever they cost.
+  Every tip carries `costNano` / `share` / `priced` in its values (normalised in
+  one place in `buildAdvice`, not at eight push sites); `priced: 0` is the honest
+  answer for the behavioural tips, whose leak is not a bill line — only the
+  re-read bill and the summarize calls can be read straight off the log.
+- **A whole-account figure does not belong inside a session panel.** The report
+  shipped as the last section of the per-session cost panel and the author could
+  not find it at all. It is now its own dock entry (`dsh-cost-audit-report`,
+  order 20, hook `data-dsh-stats-report`) with today / 7-day / 30-day tabs, and
+  the session panel got shorter by its removal.
 - **A tip diagnoses history; its button acts on the present.** The re-read tip is
   raised by a *lifetime* share, but its one-click `/compact` spends real money
   (¥0.42 on the session where this was found) and only pays while the context is

@@ -966,4 +966,51 @@ function toolCalls(count, name, args, ms, time) {
 	assert.equal(stale.values.compactedSinceRequest, 1, "the tip reports the staleness, so the button is withheld");
 }
 
+{
+	// Tips are ordered by the money at stake, and each says whether it is priced
+	// at all: a pattern worth ¥0.10 of a ¥200 session must not outrank one worth
+	// ¥50, and a tip whose leak is not a bill line must not invent a figure.
+	const events = [
+		route("deepseek-flash"),
+		...settlements(40, PEAK),
+		...toolCalls(30, "bash", JSON.stringify({ command: "echo x" }), 100, PEAK)
+	];
+	const advice = fold(events).view.advice;
+	assert.ok(advice.length >= 2, "both the re-read and the fragmented-call tips fire");
+	for (const item of advice) {
+		assert.equal(typeof item.values.costNano, "number", `${item.code}: carries the money at stake`);
+		assert.equal(typeof item.values.priced, "number", `${item.code}: says whether it is priced`);
+		assert.equal(typeof item.values.share, "number", `${item.code}: carries its share of the session`);
+	}
+	// No "act now" tip in this scenario, so the money ordering is what shows.
+	assert.equal(advice[0].code, "context-reread", "the tip with a bill line behind it comes first");
+	assert.equal(advice[0].values.priced, 1, "and is marked as priced");
+	assert.equal(advice[0].values.share, 66, "its share is a percent of the session");
+	assert.ok(advice.filter((item) => item.values.priced === 0).length >= 1, "a behavioural tip is present");
+	assert.equal(advice[advice.length - 1].values.priced, 0, "unpriced tips sort after every priced one");
+}
+
+{
+	// An "act now" tip outranks money: the failing tool and the falling balance
+	// are about being stuck, and a small priced tip must not bury them.
+	const events = [
+		route("deepseek-flash"),
+		...settlements(40, PEAK),
+		...toolCalls(1, "bash", JSON.stringify({ command: "exit 1" }), 100, PEAK),
+		...toolCalls(1, "bash", JSON.stringify({ command: "exit 1" }), 100, PEAK),
+		...toolCalls(1, "bash", JSON.stringify({ command: "exit 1" }), 100, PEAK)
+	];
+	const advice = fold(events).view.advice;
+	const high = advice.filter((item) => item.severity === "high");
+	if (high.length > 0) {
+		assert.equal(advice[0].severity, "high", "an urgent tip leads even when a priced tip is present");
+	}
+	for (let index = 1; index < advice.length; index += 1) {
+		const before = advice[index - 1];
+		const after = advice[index];
+		if (before.severity === "high" || after.severity === "high") continue;
+		assert.ok(before.values.costNano >= after.values.costNano, "within the non-urgent band, the money ordering holds");
+	}
+}
+
 process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} connection routes)\n`);

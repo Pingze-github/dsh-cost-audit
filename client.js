@@ -42,8 +42,9 @@ window.__ModuleLoader__.load({
 		const BALANCE_PATH = "/api/dsh-cost-audit.balance";
 		/** Account-wide daily totals, merged host-side across every session. */
 		const REPORT_PATH = "/api/dsh-cost-audit.report";
-		/** The report's headline window, and the window it is compared against. */
+		/** The default report window, and every window the panel can be read over. */
 		const REPORT_DAYS = 7;
+		const REPORT_PERIODS = [1, 7, 30];
 		const REPORT_MIN_INTERVAL_MS = 60000;
 		/** Every field one day bucket carries; anything missing counts as zero. */
 		const REPORT_FIELDS = [
@@ -120,7 +121,14 @@ window.__ModuleLoader__.load({
 			"session.compaction": "其中压缩摘要",
 			"session.compactionValue": "{cost} · {count} 次压缩",
 			"session.compactionManual": "{cost} · {count} 次压缩（含手动 {manual}）",
-			"report.title": "全账号 · 最近 {days} 天",
+						"report.entry": "全账号账单",
+			"report.pill": "全账号 {cost}",
+			"report.today": "今天",
+			"report.days": "{days} 天",
+			"adviceMoney": "{cost} · {share}%",
+			"adviceUnpriced": "不直接计价",
+			"adviceMoneyNote": "每条建议都标出它涉及多少钱、占本次会话多少，列表就按这个排 —— 只占一点点的排在后面。标「不直接计价」的那些，日志里没有对应的账单行，估一个数只会误导。紧急项（工具连续失败、余额将尽）排最前，因为那是卡住了，不是花多了。",
+
 			"report.vs": "对比前 {days} 天",
 			"report.before": "前 {days} 天 {cost}",
 			"report.steady": "基本持平",
@@ -263,7 +271,14 @@ window.__ModuleLoader__.load({
 			"session.compaction": "of which compaction",
 			"session.compactionValue": "{cost} · {count}×",
 			"session.compactionManual": "{cost} · {count}× ({manual} manual)",
-			"report.title": "Whole account · last {days} days",
+						"report.entry": "Whole-account bill",
+			"report.pill": "Account {cost}",
+			"report.today": "Today",
+			"report.days": "{days} days",
+			"adviceMoney": "{cost} · {share}%",
+			"adviceUnpriced": "not priced",
+			"adviceMoneyNote": "Every tip says how much money it is about and what share of this session that is, and the list is ordered by it, so a pattern worth little sits at the bottom. The ones marked unpriced have no bill line behind them in the log — estimating a figure would mislead. Urgent items (a tool failing in a loop, a balance about to run out) lead, because being stuck is not a spending question.",
+
 			"report.vs": "vs the previous {days} days",
 			"report.before": "{cost} the week before",
 			"report.steady": "about the same",
@@ -389,8 +404,11 @@ window.__ModuleLoader__.load({
 			".dshstats-pill svg{flex:none;width:14px;height:14px}",
 			".dshstats-pill:hover,.dshstats-pill[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}",
 			".dshstats-sep{color:var(--dsw-alias-separator-primary);margin:0 6px}",
-			".dshstats-panel{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(440px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed}",
-			".dshstats-panelTitle{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex}",
+			".dshstats-panel{z-index:1100;box-sizing:border-box;background:var(--dsw-specific-menu);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);width:max-content;min-width:min(300px,100vw - 24px);max-width:min(440px,100vw - 24px);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-secondary);cursor:default;border:0;border-radius:12px;padding:16px;font-size:12px;line-height:18px;position:fixed;display:flex;flex-direction:column;max-height:min(72vh,620px)}",
+			".dshstats-panelBody{overflow-y:auto;overscroll-behavior:contain;min-height:0;margin:0 -6px;padding:0 6px}",
+			".dshstats-panelBody::-webkit-scrollbar{width:6px}",
+			".dshstats-panelBody::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:3px}",
+			".dshstats-panelTitle{color:var(--dsw-alias-label-primary);justify-content:space-between;gap:16px;margin-bottom:8px;font-weight:500;display:flex;flex:none}",
 			".dshstats-panelRule{border-top:.5px solid var(--dsw-alias-border-l2);margin-bottom:10px}",
 			".dshstats-sectionRule{border-top:.5px solid var(--dsw-alias-border-l2);margin:10px 0}",
 			".dshstats-panelValue{font-variant-numeric:tabular-nums}",
@@ -432,6 +450,12 @@ window.__ModuleLoader__.load({
 			".dshstats-verdictRan{color:var(--dsw-alias-label-secondary)}",
 			".dshstats-adviceNote{color:var(--dsw-alias-label-caption);line-height:1.35}",
 			".dshstats-tag-done{background:var(--dsw-alias-bg-neutral);color:var(--dsw-alias-label-secondary)}",
+			".dshstats-tabs{display:flex;gap:4px;margin-bottom:8px}",
+			".dshstats-tab{border:0;border-radius:6px;padding:2px 8px;font:inherit;cursor:pointer;background:transparent;color:var(--dsw-alias-label-tertiary)}",
+			".dshstats-tab-on{background:var(--dsw-alias-bg-neutral);color:var(--dsw-alias-label-primary)}",
+			".dshstats-pill svg{flex:none;width:14px;height:14px}",
+			".dshstats-adviceMoney{margin-left:auto;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;white-space:nowrap}",
+			".dshstats-adviceMoney-none{color:var(--dsw-alias-label-caption)}",
 			".dshstats-reportTotal{display:flex;gap:6px;align-items:baseline;font-weight:500}",
 			".dshstats-reportRow{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline}",
 			".dshstats-reportLabel{color:var(--dsw-alias-label-secondary)}",
@@ -744,9 +768,13 @@ window.__ModuleLoader__.load({
 						h("span", { className: "dshstats-panelLabel" }, icon, title),
 						value === null || value === undefined ? null : h("span", { className: "dshstats-panelValue" }, value)
 					),
-					h("div", { className: "dshstats-panelRule", "aria-hidden": true }),
-					blocks,
-					children
+					h(
+						"div",
+						{ className: "dshstats-panelBody" },
+						h("div", { className: "dshstats-panelRule", "aria-hidden": true }),
+						blocks,
+						children
+					)
 				),
 				document.body
 			);
@@ -1447,10 +1475,10 @@ window.__ModuleLoader__.load({
 		 * @param t - locale seat.
 		 * @returns the delta text, or null when there is nothing to compare.
 		 */
-		function reportDelta(current, previous, t) {
+		function reportDelta(current, previous, t, period) {
 			if (current === undefined || previous === undefined || previous === 0) return null;
 			const move = (current - previous) / previous;
-			if (Math.abs(move) > 10) return t("report.before", { cost: formatRatio(previous), days: REPORT_DAYS });
+			if (Math.abs(move) > 10) return t("report.before", { cost: formatRatio(previous), days: period });
 			if (Math.abs(move) < 0.01) return t("report.steady");
 			return t(move > 0 ? "report.rise" : "report.fall", { percent: Math.round(Math.abs(move) * 100) });
 		}
@@ -1489,11 +1517,11 @@ window.__ModuleLoader__.load({
 		 * @param t - locale seat.
 		 * @returns the headline plus rows, or null when there is nothing to show.
 		 */
-		function reportRows(report, t) {
+		function reportRows(report, period, t) {
 			const days = report !== undefined && report.ok === true ? report.days : undefined;
 			if (days === undefined) return null;
-			const now = reportWindow(days, 0, REPORT_DAYS);
-			const before = reportWindow(days, REPORT_DAYS, REPORT_DAYS);
+			const now = reportWindow(days, 0, period);
+			const before = reportWindow(days, period, period);
 			if (now.requests === 0 && before.requests === 0) return null;
 			const prompt = now.cacheReadTokens + now.uncachedInputTokens + now.cacheWriteTokens;
 			const pastPrompt = before.cacheReadTokens + before.uncachedInputTokens + before.cacheWriteTokens;
@@ -1503,22 +1531,22 @@ window.__ModuleLoader__.load({
 			const hit = ratioOf(now.cacheReadTokens, prompt);
 			return {
 				total: formatCny(now.costNano),
-				totalDelta: reportDelta(now.costNano, before.costNano, t),
+				totalDelta: reportDelta(now.costNano, before.costNano, t, period),
 				items: [
-					{ key: "perTurn", label: t("report.perTurn"), value: formatRatio(perTurn), delta: reportDelta(perTurn, ratioOf(before.costNano, before.turns), t), hint: t("report.perTurnHint") },
-					{ key: "perEdit", label: t("report.perEdit"), value: formatRatio(perEdit), delta: reportDelta(perEdit, ratioOf(before.costNano, before.edits), t), hint: t("report.perEditHint") },
+					{ key: "perTurn", label: t("report.perTurn"), value: formatRatio(perTurn), delta: reportDelta(perTurn, ratioOf(before.costNano, before.turns), t, period), hint: t("report.perTurnHint") },
+					{ key: "perEdit", label: t("report.perEdit"), value: formatRatio(perEdit), delta: reportDelta(perEdit, ratioOf(before.costNano, before.edits), t, period), hint: t("report.perEditHint") },
 					{
 						key: "perOutput",
 						label: t("report.perOutput"),
 						value: formatRatio(perOutput),
-						delta: reportDelta(perOutput, ratioOf(before.costNano, before.outputTokens / 1000), t),
+						delta: reportDelta(perOutput, ratioOf(before.costNano, before.outputTokens / 1000), t, period),
 						hint: t("report.perOutputHint")
 					},
 					{
 						key: "hit",
 						label: t("report.hit"),
 						value: hit === undefined ? "—" : `${String(Math.round(hit * 1000) / 10)}%`,
-						delta: reportDelta(hit, ratioOf(before.cacheReadTokens, pastPrompt), t),
+						delta: reportDelta(hit, ratioOf(before.cacheReadTokens, pastPrompt), t, period),
 						hint: t("report.hitHint")
 					},
 					{
@@ -1540,9 +1568,9 @@ window.__ModuleLoader__.load({
 			};
 		}
 
-		/** The report, as one panel section. Nothing renders while the route is silent. */
-		function reportSection(report, t) {
-			const rows = reportRows(report, t);
+		/** The report's own panel body: window tabs, headline, rows, boundaries. */
+		function reportBody(report, period, setPeriod, t) {
+			const rows = reportRows(report, period, t);
 			if (rows === null) return null;
 			const items = rows.items.map((item) =>
 				h(
@@ -1554,23 +1582,101 @@ window.__ModuleLoader__.load({
 					h("span", { className: "dshstats-reportHint" }, item.hint)
 				)
 			);
-			return {
-				title: t("report.title", { days: REPORT_DAYS }),
-				rows: [
-					h(
-						"div",
-						{ key: "report", className: "dshstats-report" },
+			return h(
+				"div",
+				{ className: "dshstats-report" },
+				h(
+					"div",
+					{ className: "dshstats-tabs", role: "tablist" },
+					REPORT_PERIODS.map((value) =>
 						h(
-							"div",
-							{ className: "dshstats-reportTotal" },
-							rows.total,
-							rows.totalDelta === null ? null : h("span", { className: "dshstats-reportDelta" }, rows.totalDelta)
-						),
-						...items,
-						h("p", { className: "dshstats-reportNote" }, t("report.note"))
+							"button",
+							{
+								key: String(value),
+								type: "button",
+								role: "tab",
+								"aria-selected": value === period,
+								className: `dshstats-tab${value === period ? " dshstats-tab-on" : ""}`,
+								onClick: () => setPeriod(value)
+							},
+							value === 1 ? t("report.today") : t("report.days", { days: value })
+						)
 					)
-				]
-			};
+				),
+				h(
+					"div",
+					{ className: "dshstats-reportTotal" },
+					rows.total,
+					rows.totalDelta === null ? null : h("span", { className: "dshstats-reportDelta" }, rows.totalDelta)
+				),
+				...items,
+				h("p", { className: "dshstats-reportNote" }, t("report.note"))
+			);
+		}
+
+		/**
+		 * The account-wide report as its own dock pill.
+		 *
+		 * It used to sit at the bottom of the session panel, where the author
+		 * could not find it at all — a whole-account figure filed under one
+		 * session is on the wrong shelf. It renders nothing until the route
+		 * answers (the fold reads every session, so the first read is not
+		 * instant) and nothing when the machine has no spend to report.
+		 *
+		 * @param props - slot props, for the locale seat.
+		 * @returns the pill, or null.
+		 */
+		function ReportPill(props) {
+			const { t } = props;
+			const seat = useStatDialog();
+			const report = useReport();
+			const [period, setPeriod] = react.useState(REPORT_DAYS);
+			const days = report !== undefined && report.ok === true ? report.days : undefined;
+			if (days === undefined) return null;
+			const span = reportWindow(days, 0, period);
+			if (span.requests === 0) return null;
+			const body = reportBody(report, period, setPeriod, t);
+			if (body === null) return null;
+			const label = t("report.pill", { cost: formatCny(span.costNano) });
+			return h(
+				"span",
+				{ className: "dshstats-anchor" },
+				h(
+					"button",
+					{
+						ref: seat.rootRef,
+						type: "button",
+						className: "dshstats-pill dshstats-pill-info",
+						"data-dsh-stats-report": true,
+						"aria-haspopup": "dialog",
+						"aria-expanded": seat.open,
+						"aria-label": t("report.entry"),
+						onClick: () => seat.setOpen(!seat.open)
+					},
+					h(ReportIcon, null),
+					h("span", { className: "dshstats-label" }, label)
+				),
+				panelOf({
+					open: seat.open,
+					panelRef: seat.panelRef,
+					pos: seat.pos,
+					icon: h(ReportIcon, null),
+					title: t("report.entry"),
+					value: label,
+					ariaLabel: t("report.entry"),
+					children: body
+				})
+			);
+		}
+
+		/** A small ledger glyph, inline so it needs nothing from the seed. */
+		function ReportIcon() {
+			return h(
+				"svg",
+				{ viewBox: "0 0 16 16", "aria-hidden": true, fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round" },
+				h("rect", { x: 2.5, y: 2, width: 11, height: 12, rx: 1.5 }),
+				h("path", { d: "M5.5 5.5h5M5.5 8h5M5.5 10.5h3" })
+			);
 		}
 
 		/** One report read is reused for a minute; folding every session is not free. */
@@ -1629,7 +1735,6 @@ window.__ModuleLoader__.load({
 		function SessionCostPill(props) {
 			const { t, stats, balance } = props;
 			const seat = useStatDialog();
-			const report = useReport();
 			react.useEffect(() => {
 				if (!seat.open) return undefined;
 				return balance.refresh();
@@ -1680,10 +1785,6 @@ window.__ModuleLoader__.load({
 						]
 					: [h(Detail, { key: "state", label: t("session.balance"), children: balanceLabel })]
 			});
-			// Account-wide, not this session's — labelled as such, and last, because
-			// it answers a different question than everything above it.
-			const account = reportSection(report, t);
-			if (account !== null) sections.push(account);
 			return h(
 				"span",
 				{ className: "dshstats-anchor" },
@@ -1825,6 +1926,15 @@ window.__ModuleLoader__.load({
 							t(record === undefined ? `advice.${item.severity}` : "advice.adoptedTag")
 						),
 						h("span", { className: "dshstats-adviceTitle" }, t(`advice.${segment}.title`)),
+						// What this tip is about, in money — the answer to "is it worth
+						// my attention" rather than "is it a problem".
+						h(
+							"span",
+							{ className: `dshstats-adviceMoney${item.values?.priced === 1 ? "" : " dshstats-adviceMoney-none"}` },
+							item.values?.priced === 1
+								? t("adviceMoney", { cost: formatCny(item.values.costNano), share: item.values.share })
+								: t("adviceUnpriced")
+						),
 						h(
 							"button",
 							{ type: "button", className: "dshstats-dismiss", onClick: () => dismiss(item.code) },
@@ -1930,7 +2040,7 @@ window.__ModuleLoader__.load({
 					title: t("advice.title"),
 					value: adviceCountLabel(open.length, adopted.length, t),
 					ariaLabel: t("advice.title"),
-					children: items
+					children: [h("p", { key: "moneyNote", className: "dshstats-adviceNote" }, t("adviceMoneyNote")), ...items]
 				})
 			);
 		}
@@ -1954,6 +2064,13 @@ window.__ModuleLoader__.load({
 			ctx.slots.inject("conversation.composer.dock", () =>
 				ctx.slots.register({ name: "conversation.composer.dock", id: "dsh-cost-audit-session", order: 10, locale: NS }, (props) =>
 					h(SessionSlot, { ...props, t: props.t ?? t })
+				)
+			);
+			// Its own entry, not a section inside the session panel: the author
+			// could not find the account figure where it used to live.
+			ctx.slots.inject("conversation.composer.dock", () =>
+				ctx.slots.register({ name: "conversation.composer.dock", id: "dsh-cost-audit-report", order: 20, locale: NS }, (props) =>
+					h(ReportPill, { ...props, t: props.t ?? t })
 				)
 			);
 		}
