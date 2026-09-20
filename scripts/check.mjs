@@ -1013,4 +1013,58 @@ function toolCalls(count, name, args, ms, time) {
 	}
 }
 
+{
+	// Producing through the shell counts as producing. `toolCalls` puts every call
+	// in one step, so the steps are built by hand here — the counter that decides
+	// this tip only moves on `step/end`.
+	const shellSteps = (count, command) => {
+		const events = [route("deepseek-flash")];
+		for (let index = 0; index < count; index += 1) {
+			const step = index + 1;
+			events.push({ type: "step/start", seq: index * 4, time: PEAK, data: { turn: 1, step } });
+			events.push({
+				type: "tool/call",
+				seq: index * 4 + 1,
+				time: PEAK,
+				data: { turn: 1, step, callId: `c${String(index)}`, name: "bash", arguments: JSON.stringify({ command }) }
+			});
+			events.push({
+				type: "tool/result",
+				seq: index * 4 + 2,
+				time: PEAK + 100,
+				data: { turn: 1, step, message: { source: { callId: `c${String(index)}` } } }
+			});
+			events.push({ type: "step/end", seq: index * 4 + 3, time: PEAK + 200, data: { turn: 1, step } });
+		}
+		return events;
+	};
+	const idle = (command) => fold(shellSteps(35, command)).view;
+
+	const readOnly = idle("grep -rn TODO src");
+	assert.ok(
+		readOnly.advice.some((item) => item.code === "idle-grinding"),
+		"a read-only shell loop still reads as investigation"
+	);
+	assert.equal(readOnly.metrics.productiveCalls, 0, "and produces nothing");
+
+	for (const [command, why] of [
+		["python3 - <<'PY'\nopen('x','w').write('y')\nPY", "a heredoc that writes files"],
+		["echo hi > /tmp/x", "a redirect"],
+		["git commit -m 'x'", "a commit"],
+		["sed -i 's/a/b/' index.js", "an in-place edit"],
+		["pnpm install", "an install"]
+	]) {
+		const view = idle(command);
+		assert.equal(view.advice.some((item) => item.code === "idle-grinding"), false, `${why} clears the tip`);
+		assert.ok(view.metrics.productiveCalls >= 35, `${why} counts as output`);
+	}
+
+	const sink = idle("node check.mjs > /dev/null 2>&1");
+	assert.ok(
+		sink.advice.some((item) => item.code === "idle-grinding"),
+		"writing to /dev/null and duplicating a descriptor is not producing"
+	);
+	assert.equal(sink.metrics.productiveCalls, 0, "and counts nothing");
+}
+
 process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} connection routes)\n`);

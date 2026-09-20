@@ -392,8 +392,69 @@ const ZERO_SIGNALS = Object.freeze({
   compactedSinceRequest: false,
 });
 
-/** Tools whose call means the session actually produced or shipped something. */
+/** Tools whose name alone means the session actually produced or shipped something. */
 const PRODUCTIVE_TOOLS = Object.freeze(new Set(["write", "edit", "str_replace_editor", "present"]));
+
+/** Tools whose arguments carry a command line that has to be read. */
+const SHELL_TOOLS = Object.freeze(new Set(["bash", "shell", "sh", "exec", "run", "run_command", "command", "terminal"]));
+
+/**
+ * Command shapes that write to the workspace.
+ *
+ * A tool name is not enough. An agent that patches files through a heredoc or a
+ * redirect has produced exactly as much as one that calls `write`, and the
+ * session this was found in was 867 shell calls against 107 named writes — enough
+ * for the "investigation without output" tip to nag for 36 straight steps while a
+ * whole feature was being built. There is no file-change event to read instead:
+ * the session log carries `deliverables/presented` but no `fs/*-intent`, so the
+ * command text is the only honest signal available.
+ *
+ * Tuned to *write* shapes rather than to "ran something", because the failure
+ * modes are not symmetric: a read-only loop that reads as productive silences a
+ * real finding, while a write that reads as idle just repeats a tip that is
+ * wrong. Both are wrong, but this list is the one that stays quiet when it should.
+ */
+const WRITE_SHAPES = Object.freeze([
+  /(?<![0-9&])>>?(?!&|>)(?!\s*\/dev\/null)/,
+  /<</,
+  /\btee\b/,
+  /\bsed\b[^\n]*\s-\w*i/,
+  /\bgit\s+(add|commit|push|apply|am|merge|rebase|stash|tag|init|checkout|mv|rm|restore)\b/,
+  /(?:^|[\s;|&(])(cp|mv|ln|install|touch|truncate|patch|chmod|chown|mkdir|rmdir|tar|unzip|dd)\b/,
+  /\b(npm|pnpm|yarn|pip|pip3|apt|apt-get|brew|cargo)\b[^\n]*\b(install|add|remove|uninstall|build|run)\b/,
+  /\bgh\s+(repo|pr|release|issue|gist|api)\b/,
+  /\bfind\b[^\n]*\s-delete\b/,
+]);
+
+/** The command line a shell tool was asked to run, or "" when there is none. */
+function commandOf(name, args) {
+  if (!SHELL_TOOLS.has(name)) return "";
+  let parsed = args;
+  if (typeof args === "string") {
+    try {
+      parsed = JSON.parse(args);
+    } catch {
+      return "";
+    }
+  }
+  if (parsed === null || typeof parsed !== "object") return "";
+  for (const field of ["command", "cmd", "script", "code"]) {
+    if (typeof parsed[field] === "string") return parsed[field];
+  }
+  return "";
+}
+
+/**
+ * Whether one dispatched call produced something that outlives the turn.
+ * @param name - the tool name.
+ * @param args - its raw arguments.
+ * @returns whether the call counts as output.
+ */
+function isProductive(name, args) {
+  if (PRODUCTIVE_TOOLS.has(name)) return true;
+  const command = commandOf(name, args);
+  return command !== "" && WRITE_SHAPES.some((shape) => shape.test(command));
+}
 
 /**
  * The stable identity of one tool call's target, for repeat detection: the file
@@ -1267,7 +1328,7 @@ function createStatsProjection(pricing) {
           const key = `${data.name}\u0000${target}`;
           const seen = state.signals.targets[key]?.count ?? 0;
           const targets = target === "" ? state.signals.targets : bumpTally(state.signals.targets, key, { name: data.name, target, count: seen + 1 }, TARGET_MEMORY);
-          const productive = PRODUCTIVE_TOOLS.has(data.name);
+          const productive = isProductive(data.name, data.arguments);
           next = {
             ...next,
             pendingCalls: { ...state.pendingCalls, [data.callId]: { name: data.name, time: event.time, turn } },
