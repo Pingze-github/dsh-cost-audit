@@ -166,11 +166,22 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   one place in `buildAdvice`, not at eight push sites); `priced: 0` is the honest
   answer for the behavioural tips, whose leak is not a bill line — only the
   re-read bill and the summarize calls can be read straight off the log.
-- **A whole-account figure does not belong inside a session panel.** The report
-  shipped as the last section of the per-session cost panel and the author could
-  not find it at all. It is now its own dock entry (`dsh-cost-audit-report`,
-  order 20, hook `data-dsh-stats-report`) with today / 7-day / 30-day tabs, and
-  the session panel got shorter by its removal.
+- **File a figure by the question it answers, not by its scope.** The account
+  report first shipped as the last section of the per-session cost panel, where
+  the author could not find it; then as its own dock pill, which he asked to have
+  put back inside the advice card "where the suggestions are". Both poles were
+  wrong the same way. It is now a view inside the advice card: a two-way switch
+  at the top, then today / 7-day / 30-day tabs and a cost-per-turn sparkline.
+- **Every text element in a panel inherits the panel's 12px/18px.** A hint that
+  sets its own `line-height` is instantly visible as the odd one out — the author
+  reported exactly that about the report's notes (`line-height:1.35`, 16.2px
+  against the panel's 18px). Differentiate with colour, never with size, and
+  check with `getComputedStyle` rather than by eye.
+- **Draw cost per turn, never the daily total.** A daily total rises whenever you
+  work more, so a curve of it says nothing about efficiency; cost per turn is the
+  one series where a rising line means something. Days with no turns are gaps
+  rather than zeros — a day off is not a cheap day — and a line through fewer than
+  three days is not drawn at all.
 - **A tip diagnoses history; its button acts on the present.** The re-read tip is
   raised by a *lifetime* share, but its one-click `/compact` spends real money
   (¥0.42 on the session where this was found) and only pays while the context is

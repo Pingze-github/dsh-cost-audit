@@ -122,9 +122,10 @@ window.__ModuleLoader__.load({
 			"session.compactionValue": "{cost} · {count} 次压缩",
 			"session.compactionManual": "{cost} · {count} 次压缩（含手动 {manual}）",
 						"report.entry": "全账号账单",
-			"report.pill": "全账号 {cost}",
 			"report.today": "今天",
 			"report.days": "{days} 天",
+			"report.loading": "账单还在读取（要把这台机器上每个会话都折一遍，头一次会慢一两秒）",
+			"report.trend": "每回合花费 · 最近 30 天（{days} 天有活动）· 最新 {cost}",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "不直接计价",
 			"adviceMoneyNote": "每条建议都标出它涉及多少钱、占本次会话多少，列表就按这个排 —— 只占一点点的排在后面。标「不直接计价」的那些，日志里没有对应的账单行，估一个数只会误导。紧急项（工具连续失败、余额将尽）排最前，因为那是卡住了，不是花多了。",
@@ -272,9 +273,10 @@ window.__ModuleLoader__.load({
 			"session.compactionValue": "{cost} · {count}×",
 			"session.compactionManual": "{cost} · {count}× ({manual} manual)",
 						"report.entry": "Whole-account bill",
-			"report.pill": "Account {cost}",
 			"report.today": "Today",
 			"report.days": "{days} days",
+			"report.loading": "Reading the bill — it folds every session on this machine, so the first read takes a second or two",
+			"report.trend": "Cost per turn · last 30 days ({days} active) · latest {cost}",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "not priced",
 			"adviceMoneyNote": "Every tip says how much money it is about and what share of this session that is, and the list is ordered by it, so a pattern worth little sits at the bottom. The ones marked unpriced have no bill line behind them in the log — estimating a figure would mislead. Urgent items (a tool failing in a loop, a balance about to run out) lead, because being stuck is not a spending question.",
@@ -448,11 +450,16 @@ window.__ModuleLoader__.load({
 			".dshstats-verdict-improved .dshstats-verdictState{color:var(--dsw-alias-state-success-primary)}",
 			".dshstats-verdict-worse .dshstats-verdictState{color:var(--dsw-alias-state-error-primary)}",
 			".dshstats-verdictRan{color:var(--dsw-alias-label-secondary)}",
-			".dshstats-adviceNote{color:var(--dsw-alias-label-caption);line-height:1.35}",
+			
 			".dshstats-tag-done{background:var(--dsw-alias-bg-neutral);color:var(--dsw-alias-label-secondary)}",
-			".dshstats-tabs{display:flex;gap:4px;margin-bottom:8px}",
-			".dshstats-tab{border:0;border-radius:6px;padding:2px 8px;font:inherit;cursor:pointer;background:transparent;color:var(--dsw-alias-label-tertiary)}",
-			".dshstats-tab-on{background:var(--dsw-alias-bg-neutral);color:var(--dsw-alias-label-primary)}",
+						".dshstats-switch{display:flex;gap:4px;margin-bottom:10px}",
+			".dshstats-switchButton{font:inherit;line-height:inherit;border:0;border-radius:6px;padding:1px 8px;cursor:pointer;background:transparent;color:var(--dsw-alias-label-tertiary)}",
+			".dshstats-switchOn{background:var(--dsw-alias-bg-neutral);color:var(--dsw-alias-label-primary)}",
+			".dshstats-note{margin:0 0 8px;color:var(--dsw-alias-label-caption)}",
+			".dshstats-adviceNote{color:var(--dsw-alias-label-caption)}",
+			".dshstats-trend{color:var(--dsw-alias-label-tertiary);margin-bottom:10px}",
+			".dshstats-trendHead{display:flex;gap:6px;align-items:baseline;margin-bottom:2px}",
+			".dshstats-trend svg{display:block;width:100%;height:40px}",
 			".dshstats-pill svg{flex:none;width:14px;height:14px}",
 			".dshstats-adviceMoney{margin-left:auto;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;white-space:nowrap}",
 			".dshstats-adviceMoney-none{color:var(--dsw-alias-label-caption)}",
@@ -461,8 +468,8 @@ window.__ModuleLoader__.load({
 			".dshstats-reportLabel{color:var(--dsw-alias-label-secondary)}",
 			".dshstats-reportValue{text-align:right;font-variant-numeric:tabular-nums}",
 			".dshstats-reportDelta{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}",
-			".dshstats-reportHint{grid-column:1/-1;color:var(--dsw-alias-label-caption);line-height:1.35}",
-			".dshstats-reportNote{margin:8px 0 0;color:var(--dsw-alias-label-caption);line-height:1.35}",
+			
+			
 			".dshstats-verdictDetail,.dshstats-verdictSample,.dshstats-verdictSpent,.dshstats-verdictRemaining{color:var(--dsw-alias-label-tertiary)}"
 		].join("");
 
@@ -1587,7 +1594,7 @@ window.__ModuleLoader__.load({
 				{ className: "dshstats-report" },
 				h(
 					"div",
-					{ className: "dshstats-tabs", role: "tablist" },
+					{ className: "dshstats-switch", role: "tablist" },
 					REPORT_PERIODS.map((value) =>
 						h(
 							"button",
@@ -1596,7 +1603,7 @@ window.__ModuleLoader__.load({
 								type: "button",
 								role: "tab",
 								"aria-selected": value === period,
-								className: `dshstats-tab${value === period ? " dshstats-tab-on" : ""}`,
+								className: `dshstats-switchButton${value === period ? " dshstats-switchOn" : ""}`,
 								onClick: () => setPeriod(value)
 							},
 							value === 1 ? t("report.today") : t("report.days", { days: value })
@@ -1614,70 +1621,73 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+
 		/**
-		 * The account-wide report as its own dock pill.
+		 * The cost-per-turn trend over the last 30 days.
 		 *
-		 * It used to sit at the bottom of the session panel, where the author
-		 * could not find it at all — a whole-account figure filed under one
-		 * session is on the wrong shelf. It renders nothing until the route
-		 * answers (the fold reads every session, so the first read is not
-		 * instant) and nothing when the machine has no spend to report.
+		 * The table below the tabs answers "what did this window cost"; this
+		 * answers the question the table cannot — whether the *unit* cost is
+		 * rising. A daily total goes up whenever you work more, so it is a
+		 * useless thing to draw; cost per turn is the one series where a rising
+		 * line means something went wrong. Days with no turns are gaps rather
+		 * than zeros, because a day off is not a cheap day.
 		 *
-		 * @param props - slot props, for the locale seat.
-		 * @returns the pill, or null.
+		 * @param days - the merged calendar.
+		 * @param t - locale seat.
+		 * @returns the trend block, or null while there is not enough to draw.
 		 */
-		function ReportPill(props) {
-			const { t } = props;
-			const seat = useStatDialog();
-			const report = useReport();
-			const [period, setPeriod] = react.useState(REPORT_DAYS);
-			const days = report !== undefined && report.ok === true ? report.days : undefined;
-			if (days === undefined) return null;
-			const span = reportWindow(days, 0, period);
-			if (span.requests === 0) return null;
-			const body = reportBody(report, period, setPeriod, t);
-			if (body === null) return null;
-			const label = t("report.pill", { cost: formatCny(span.costNano) });
+		function costTrend(days, t) {
+			const points = [];
+			const today = new Date();
+			today.setHours(0, 0, 0, 0);
+			for (let back = 29; back >= 0; back -= 1) {
+				const date = new Date(today);
+				date.setDate(date.getDate() - back);
+				const day = days[reportDayKey(date)];
+				if (day === undefined || day.turns === 0) continue;
+				points.push({ key: reportDayKey(date), value: day.costNano / day.turns });
+			}
+			// A line through one point is a dot, and a dot is not a trend.
+			if (points.length < 3) return null;
+			const values = points.map((point) => point.value);
+			const highest = Math.max(...values);
+			const lowest = Math.min(...values);
+			const spread = highest - lowest || highest || 1;
+			const width = 260;
+			const height = 40;
+			const pad = 5;
+			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, points.length - 1);
+			const atY = (value) => height - pad - ((value - lowest) / spread) * (height - pad * 2);
+			const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${atX(index).toFixed(1)} ${atY(point.value).toFixed(1)}`).join(" ");
+			const half = Math.floor(points.length / 2);
+			const early = points.slice(0, half).reduce((sum, point) => sum + point.value, 0) / Math.max(1, half);
+			const late = points.slice(half).reduce((sum, point) => sum + point.value, 0) / Math.max(1, points.length - half);
+			const delta = reportDelta(late, early, t, 30);
 			return h(
-				"span",
-				{ className: "dshstats-anchor" },
+				"div",
+				{ className: "dshstats-trend" },
 				h(
-					"button",
-					{
-						ref: seat.rootRef,
-						type: "button",
-						className: "dshstats-pill dshstats-pill-info",
-						"data-dsh-stats-report": true,
-						"aria-haspopup": "dialog",
-						"aria-expanded": seat.open,
-						"aria-label": t("report.entry"),
-						onClick: () => seat.setOpen(!seat.open)
-					},
-					h(ReportIcon, null),
-					h("span", { className: "dshstats-label" }, label)
+					"div",
+					{ className: "dshstats-trendHead" },
+					t("report.trend", { cost: formatRatio(points[points.length - 1].value), days: points.length }),
+					delta === null ? null : h("span", { className: "dshstats-reportDelta" }, delta)
 				),
-				panelOf({
-					open: seat.open,
-					panelRef: seat.panelRef,
-					pos: seat.pos,
-					icon: h(ReportIcon, null),
-					title: t("report.entry"),
-					value: label,
-					ariaLabel: t("report.entry"),
-					children: body
-				})
+				h(
+					"svg",
+					{ viewBox: `0 0 ${String(width)} ${String(height)}`, preserveAspectRatio: "none", "aria-hidden": true },
+					h("path", {
+						d: path,
+						fill: "none",
+						stroke: "currentColor",
+						strokeWidth: 1.5,
+						vectorEffect: "non-scaling-stroke",
+						strokeLinejoin: "round",
+						strokeLinecap: "round"
+					})
+				)
 			);
 		}
 
-		/** A small ledger glyph, inline so it needs nothing from the seed. */
-		function ReportIcon() {
-			return h(
-				"svg",
-				{ viewBox: "0 0 16 16", "aria-hidden": true, fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round" },
-				h("rect", { x: 2.5, y: 2, width: 11, height: 12, rx: 1.5 }),
-				h("path", { d: "M5.5 5.5h5M5.5 8h5M5.5 10.5h3" })
-			);
-		}
 
 		/** One report read is reused for a minute; folding every session is not free. */
 		let reportCache = { at: 0, value: undefined };
@@ -1853,6 +1863,13 @@ window.__ModuleLoader__.load({
 			const seat = useStatDialog();
 			const [dismissed, setDismissed] = react.useState(() => readDismissed(sessionId));
 			const [adopted, setAdopted] = react.useState(() => readAdopted(sessionId));
+			// The bill lives in here rather than in a pill of its own: it answers
+			// the same question this card does ("where is the money going"), and a
+			// separate dock entry put an account figure at the bottom of the
+			// composer where nobody looked for it.
+			const [view, setView] = react.useState("advice");
+			const [period, setPeriod] = react.useState(REPORT_DAYS);
+			const report = useReport();
 			// `useInput` is a selector hook, exactly like `useChat` and
 			// `useProjection`; two primitive reads keep it reference-stable.
 			const draft = useInput((state) => state.draft);
@@ -2013,6 +2030,19 @@ window.__ModuleLoader__.load({
 					)
 				);
 			}
+			const switchButton = (key, label) =>
+				h(
+					"button",
+					{
+						key,
+						type: "button",
+						"aria-pressed": view === key,
+						className: `dshstats-switchButton${view === key ? " dshstats-switchOn" : ""}`,
+						onClick: () => setView(key)
+					},
+					label
+				);
+			const bill = report !== undefined && report.ok === true ? report.days : undefined;
 			return h(
 				"span",
 				{ className: "dshstats-anchor" },
@@ -2037,10 +2067,33 @@ window.__ModuleLoader__.load({
 					panelRef: seat.panelRef,
 					pos: seat.pos,
 					icon: h(ADVICE_ICON, null),
-					title: t("advice.title"),
+					title: view === "bill" ? t("report.entry") : t("advice.title"),
 					value: adviceCountLabel(open.length, adopted.length, t),
-					ariaLabel: t("advice.title"),
-					children: [h("p", { key: "moneyNote", className: "dshstats-adviceNote" }, t("adviceMoneyNote")), ...items]
+					ariaLabel: view === "bill" ? t("report.entry") : t("advice.title"),
+					children: [
+						h(
+							"div",
+							{ key: "switch", className: "dshstats-switch" },
+							switchButton("advice", t("advice.title")),
+							switchButton("bill", t("report.entry"))
+						),
+						view === "bill"
+							? h(
+									"div",
+									{ key: "bill" },
+									bill === undefined
+										? h("p", { className: "dshstats-note" }, t("report.loading"))
+										: [
+												costTrend(bill, t),
+												reportBody(report, period, setPeriod, t),
+												h("p", { key: "note", className: "dshstats-note" }, t("report.note"))
+											]
+								)
+							: h("div", { key: "advice" }, [
+									h("p", { key: "moneyNote", className: "dshstats-note" }, t("adviceMoneyNote")),
+									...items
+								])
+					]
 				})
 			);
 		}
@@ -2066,13 +2119,7 @@ window.__ModuleLoader__.load({
 					h(SessionSlot, { ...props, t: props.t ?? t })
 				)
 			);
-			// Its own entry, not a section inside the session panel: the author
-			// could not find the account figure where it used to live.
-			ctx.slots.inject("conversation.composer.dock", () =>
-				ctx.slots.register({ name: "conversation.composer.dock", id: "dsh-cost-audit-report", order: 20, locale: NS }, (props) =>
-					h(ReportPill, { ...props, t: props.t ?? t })
-				)
-			);
+
 		}
 
 		module.exports = { name: NS, inject: ["slots", "locale"], apply };
