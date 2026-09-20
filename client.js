@@ -125,31 +125,35 @@ window.__ModuleLoader__.load({
 			"report.today": "今天",
 			"report.days": "{days} 天",
 			"report.loading": "账单还在读取（要把这台机器上每个会话都折一遍，头一次会慢一两秒）",
-			"report.trend": "每回合花费 · 最近 30 天（{days} 天有活动）· 最新 {cost}",
+			"report.trend": "单位工作量花费 · 最近 {days} 天（有活动 {active} 天）",
+			"report.trendFlat": "各线按自身范围拉伸 · 只看涨跌方向",
+			"report.trendFew": "趋势至少需要 2 天有活动的数据 —— 「今天」只有 1 天，切到 7 天或 30 天",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "不直接计价",
-			"adviceMoneyNote": "每条建议都标出它涉及多少钱、占本次会话多少，列表就按这个排 —— 只占一点点的排在后面。标「不直接计价」的那些，日志里没有对应的账单行，估一个数只会误导。紧急项（工具连续失败、余额将尽）排最前，因为那是卡住了，不是花多了。",
+			"adviceMoneyNote": "按涉及的钱排序；「不直接计价」的不编数字。",
 
 			"report.vs": "对比前 {days} 天",
 			"report.before": "前 {days} 天 {cost}",
 			"report.steady": "基本持平",
 			"report.rise": "↑ {percent}%",
 			"report.fall": "↓ {percent}%",
+			"report.perStep": "每步",
+			"report.perStepDetail": "agent 每走一步要付多少 —— 步数由它自己决定，适合看效率；但把零碎调用合并成脚本会让它上升，那不是变贵",
 			"report.perTurn": "每回合",
-			"report.perTurnHint": "你每发一条消息平均花多少钱 —— 分母由你决定，建议改不动它，所以看趋势最公平",
+			"report.perTurnDetail": "你每发一条消息平均花多少钱 —— 注意回合不是工作量：说一句「你好」和一整个大任务都算一回合。它衡量的是习惯，不是效率",
 			"report.perEdit": "每产出编辑",
-			"report.perEditHint": "每 write / edit / present 一次多少钱 —— 工作量口径；纯聊天、纯调研的日子没有产出，显示 —",
+			"report.perEditDetail": "每 write / edit / present 一次多少钱 —— 工作量口径；纯聊天、纯调研的日子没有产出，显示 —",
 			"report.perOutput": "每 1K 输出 token",
-			"report.perOutputHint": "产出 1000 token 要付多少 —— 输入是输出的很多倍时它就高，缓存和上下文都在这里体现",
+			"report.perOutputDetail": "产出 1000 token 要付多少 —— 输入是输出的很多倍时它就高，缓存和上下文都在这里体现",
 			"report.hit": "缓存命中率",
-			"report.hitHint": "命中的输入按 1/50 计价（0.02 对 1 元/M）—— 掉一个点，钱就上一个台阶",
+			"report.hitDetail": "命中的输入按 1/50 计价（0.02 对 1 元/M）—— 掉一个点，钱就上一个台阶",
 			"report.split": "重读 / 冷输入 / 输出",
-			"report.splitHint": "这三项加起来才是总花费；只看总数看不出「为什么动了」",
+			"report.splitDetail": "这三项加起来才是总花费；只看总数看不出「为什么动了」",
 			"report.compaction": "其中压缩摘要",
-			"report.compactionHint": "摘要调用本身花的钱 —— 它已经算在上面三项里了，所以是子集，不是第四项",
+			"report.compactionDetail": "摘要调用本身花的钱 —— 它已经算在上面三项里了，所以是子集，不是第四项",
 			"report.peak": "高峰占比",
-			"report.peakHint": "高峰是工作日 9-12 点与 14-18 点，单价翻倍 —— 这里只报数字，不做建议",
-			"report.note": "金额按列表价计算。网页搜索与标题生成这两个调用的日志里没有用量，所以这是下界。报表能显示花费变了，但不能证明是你采纳的建议带来的。",
+			"report.peakDetail": "高峰是工作日 9-12 点与 14-18 点，单价翻倍 —— 这里只报数字，不做建议",
+			"report.note": "按列表价估算；搜索与标题两个调用测不到用量，所以是下界；显示变化，不证明因果。",
 			"advice.pill": "{count} 条建议",
 			"advice.pillWithObserving": "{count} 条待处理 · {observing} 条观察中",
 			"advice.pillObservingOnly": "{observing} 条观察中",
@@ -276,31 +280,35 @@ window.__ModuleLoader__.load({
 			"report.today": "Today",
 			"report.days": "{days} days",
 			"report.loading": "Reading the bill — it folds every session on this machine, so the first read takes a second or two",
-			"report.trend": "Cost per turn · last 30 days ({days} active) · latest {cost}",
+			"report.trend": "Cost per unit of work · last {days} days ({active} active)",
+			"report.trendFlat": "each line stretched to its own range · read the direction",
+			"report.trendFew": "A trend needs at least 2 days with activity — Today is one; try 7 or 30 days",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "not priced",
-			"adviceMoneyNote": "Every tip says how much money it is about and what share of this session that is, and the list is ordered by it, so a pattern worth little sits at the bottom. The ones marked unpriced have no bill line behind them in the log — estimating a figure would mislead. Urgent items (a tool failing in a loop, a balance about to run out) lead, because being stuck is not a spending question.",
+			"adviceMoneyNote": "Ordered by money; unpriced tips get no invented figure.",
 
 			"report.vs": "vs the previous {days} days",
 			"report.before": "{cost} the week before",
 			"report.steady": "about the same",
 			"report.rise": "up {percent}%",
 			"report.fall": "down {percent}%",
+			"report.perStep": "Per step",
+			"report.perStepDetail": "What one agent step costs — the step count is the agent's own choice, so this tracks efficiency; merging small calls into a script pushes it up, which is not the same as getting dearer",
 			"report.perTurn": "Per turn",
-			"report.perTurnHint": "What one message of yours costs on average — the denominator is yours, no advice can move it, so the trend is the fair comparison",
+			"report.perTurnDetail": "What one message of yours costs on average — but a turn is not a unit of work: one hello and one full day's task are both a turn. It measures habit, not efficiency",
 			"report.perEdit": "Per edit delivered",
-			"report.perEditHint": "What one write / edit / present costs — the work denominator; a day of pure chat or research has none and reads —",
+			"report.perEditDetail": "What one write / edit / present costs — the work denominator; a day of pure chat or research has none and reads —",
 			"report.perOutput": "Per 1K output tokens",
-			"report.perOutputHint": "What 1000 tokens of output costs — it rises when the input is many times the output, which is where cache and context show up",
+			"report.perOutputDetail": "What 1000 tokens of output costs — it rises when the input is many times the output, which is where cache and context show up",
 			"report.hit": "Cache hit rate",
-			"report.hitHint": "A hit bills at 1/50 of a miss (0.02 vs 1 CNY per M) — one point off and the money steps up",
+			"report.hitDetail": "A hit bills at 1/50 of a miss (0.02 vs 1 CNY per M) — one point off and the money steps up",
 			"report.split": "Re-read / cold input / output",
-			"report.splitHint": "These three are the total; the total alone cannot say why it moved",
+			"report.splitDetail": "These three are the total; the total alone cannot say why it moved",
 			"report.compaction": "of which compaction",
-			"report.compactionHint": "What the summarization calls cost — already inside the three above, so a subset rather than a fourth line",
+			"report.compactionDetail": "What the summarization calls cost — already inside the three above, so a subset rather than a fourth line",
 			"report.peak": "Peak-hour share",
-			"report.peakHint": "Peak is Mon-Fri 09-12 and 14-18, at double the price — a figure here, not advice",
-			"report.note": "Amounts use the configured list prices. The web-search and title-generation calls carry no usage in the log, so this is a lower bound. The report shows that spending moved; it cannot show that your own advice caused it.",
+			"report.peakDetail": "Peak is Mon-Fri 09-12 and 14-18, at double the price — a figure here, not advice",
+			"report.note": "List prices; the search and title calls log no usage, so this is a lower bound; it shows movement, not causation.",
 			"advice.pill": "{count} tips",
 			"advice.pillWithObserving": "{count} to do · {observing} observing",
 			"advice.pillObservingOnly": "{observing} observing",
@@ -456,15 +464,24 @@ window.__ModuleLoader__.load({
 			".dshstats-switchButton{font:inherit;line-height:inherit;border:0;border-radius:6px;padding:1px 8px;cursor:pointer;background:transparent;color:var(--dsw-alias-label-tertiary)}",
 			".dshstats-switchOn{background:var(--dsw-alias-bg-neutral);color:var(--dsw-alias-label-primary)}",
 			".dshstats-note{margin:0 0 8px;color:var(--dsw-alias-label-caption)}",
+			".dshstats-chart{margin-bottom:10px}",
+			".dshstats-chartHead{display:flex;justify-content:space-between;gap:8px;align-items:baseline;color:var(--dsw-alias-label-caption)}",
+			".dshstats-chart svg{display:block;width:100%;height:46px;margin:4px 0 6px}",
+			".dshstats-series{stroke:var(--dsh-series)}",
+			".dshstats-ink-0{--dsh-series:var(--dsw-alias-brand-primary)}",
+			".dshstats-ink-1{--dsh-series:var(--dsw-alias-state-success-primary)}",
+			".dshstats-ink-2{--dsh-series:var(--dsw-alias-state-business-primary)}",
+			".dshstats-ink-3{--dsh-series:var(--dsw-alias-state-warn-primary)}",
+			".dshstats-legend{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px}",
+			".dshstats-legendItem{display:flex;align-items:center;gap:4px;color:var(--dsw-alias-label-secondary)}",
+			".dshstats-legendValue{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}",
+			".dshstats-swatch{flex:none;width:8px;height:2px;border-radius:1px;background:var(--dsh-series)}",
 			".dshstats-adviceNote{color:var(--dsw-alias-label-caption)}",
-			".dshstats-trend{color:var(--dsw-alias-label-tertiary);margin-bottom:10px}",
-			".dshstats-trendHead{display:flex;gap:6px;align-items:baseline;margin-bottom:2px}",
-			".dshstats-trend svg{display:block;width:100%;height:40px}",
 			".dshstats-pill svg{flex:none;width:14px;height:14px}",
 			".dshstats-adviceMoney{margin-left:auto;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;white-space:nowrap}",
 			".dshstats-adviceMoney-none{color:var(--dsw-alias-label-caption)}",
 			".dshstats-reportTotal{display:flex;gap:6px;align-items:baseline;font-weight:500}",
-			".dshstats-reportRow{display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px;align-items:baseline}",
+			".dshstats-reportRow{display:grid;grid-template-columns:1fr auto auto;gap:0 8px;align-items:baseline}",
 			".dshstats-reportLabel{color:var(--dsw-alias-label-secondary)}",
 			".dshstats-reportValue{text-align:right;font-variant-numeric:tabular-nums}",
 			".dshstats-reportDelta{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}",
@@ -1532,6 +1549,7 @@ window.__ModuleLoader__.load({
 			if (now.requests === 0 && before.requests === 0) return null;
 			const prompt = now.cacheReadTokens + now.uncachedInputTokens + now.cacheWriteTokens;
 			const pastPrompt = before.cacheReadTokens + before.uncachedInputTokens + before.cacheWriteTokens;
+			const perStep = ratioOf(now.costNano, now.steps);
 			const perTurn = ratioOf(now.costNano, now.turns);
 			const perEdit = ratioOf(now.costNano, now.edits);
 			const perOutput = ratioOf(now.costNano, now.outputTokens / 1000);
@@ -1539,37 +1557,59 @@ window.__ModuleLoader__.load({
 			return {
 				total: formatCny(now.costNano),
 				totalDelta: reportDelta(now.costNano, before.costNano, t, period),
+				// Work-shaped denominators first, the human's own last: a turn is one
+				// message, and a one-word message and a full day's work are both one,
+				// so it is a habit measure rather than a work measure.
 				items: [
-					{ key: "perTurn", label: t("report.perTurn"), value: formatRatio(perTurn), delta: reportDelta(perTurn, ratioOf(before.costNano, before.turns), t, period), hint: t("report.perTurnHint") },
-					{ key: "perEdit", label: t("report.perEdit"), value: formatRatio(perEdit), delta: reportDelta(perEdit, ratioOf(before.costNano, before.edits), t, period), hint: t("report.perEditHint") },
+					{
+						key: "perStep",
+						label: t("report.perStep"),
+						detail: t("report.perStepDetail"),
+						value: formatRatio(perStep),
+						delta: reportDelta(perStep, ratioOf(before.costNano, before.steps), t, period)
+					},
+					{
+						key: "perEdit",
+						label: t("report.perEdit"),
+						detail: t("report.perEditDetail"),
+						value: formatRatio(perEdit),
+						delta: reportDelta(perEdit, ratioOf(before.costNano, before.edits), t, period)
+					},
 					{
 						key: "perOutput",
 						label: t("report.perOutput"),
+						detail: t("report.perOutputDetail"),
 						value: formatRatio(perOutput),
-						delta: reportDelta(perOutput, ratioOf(before.costNano, before.outputTokens / 1000), t, period),
-						hint: t("report.perOutputHint")
+						delta: reportDelta(perOutput, ratioOf(before.costNano, before.outputTokens / 1000), t, period)
+					},
+					{
+						key: "perTurn",
+						label: t("report.perTurn"),
+						detail: t("report.perTurnDetail"),
+						value: formatRatio(perTurn),
+						delta: reportDelta(perTurn, ratioOf(before.costNano, before.turns), t, period)
 					},
 					{
 						key: "hit",
 						label: t("report.hit"),
+						detail: t("report.hitDetail"),
 						value: hit === undefined ? "—" : `${String(Math.round(hit * 1000) / 10)}%`,
-						delta: reportDelta(hit, ratioOf(before.cacheReadTokens, pastPrompt), t, period),
-						hint: t("report.hitHint")
+						delta: reportDelta(hit, ratioOf(before.cacheReadTokens, pastPrompt), t, period)
 					},
 					{
 						key: "split",
 						label: t("report.split"),
+						detail: t("report.splitDetail"),
 						value: `${formatCny(now.cacheReadCostNano)} / ${formatCny(now.uncachedCostNano)} / ${formatCny(now.outputCostNano)}`,
-						delta: null,
-						hint: t("report.splitHint")
+						delta: null
 					},
-					{ key: "compaction", label: t("report.compaction"), value: formatCny(now.compactionCostNano), delta: null, hint: t("report.compactionHint") },
+					{ key: "compaction", label: t("report.compaction"), detail: t("report.compactionDetail"), value: formatCny(now.compactionCostNano), delta: null },
 					{
 						key: "peak",
 						label: t("report.peak"),
+						detail: t("report.peakDetail"),
 						value: now.costNano === 0 ? "—" : `${String(Math.round((now.peakCostNano / now.costNano) * 1000) / 10)}%`,
-						delta: null,
-						hint: t("report.peakHint")
+						delta: null
 					}
 				]
 			};
@@ -1582,11 +1622,10 @@ window.__ModuleLoader__.load({
 			const items = rows.items.map((item) =>
 				h(
 					"div",
-					{ key: item.key, className: "dshstats-reportRow" },
+					{ key: item.key, className: "dshstats-reportRow", title: `${item.label} — ${item.detail}` },
 					h("span", { className: "dshstats-reportLabel" }, item.label),
 					h("span", { className: "dshstats-reportValue" }, item.value),
-					item.delta === null ? null : h("span", { className: "dshstats-reportDelta" }, item.delta),
-					h("span", { className: "dshstats-reportHint" }, item.hint)
+					item.delta === null ? null : h("span", { className: "dshstats-reportDelta" }, item.delta)
 				)
 			);
 			return h(
@@ -1623,67 +1662,114 @@ window.__ModuleLoader__.load({
 
 
 		/**
-		 * The cost-per-turn trend over the last 30 days.
+		 * The denominators the chart draws, in legend order.
 		 *
-		 * The table below the tabs answers "what did this window cost"; this
-		 * answers the question the table cannot — whether the *unit* cost is
-		 * rising. A daily total goes up whenever you work more, so it is a
-		 * useless thing to draw; cost per turn is the one series where a rising
-		 * line means something went wrong. Days with no turns are gaps rather
-		 * than zeros, because a day off is not a cheap day.
+		 * All four are CNY per unit of work, so down is always better and one axis
+		 * can hold them. A hit rate is deliberately absent: it is a quality figure
+		 * that improves upwards, and mixing directions in one chart makes the whole
+		 * thing unreadable.
+		 *
+		 * `perTurn` stays in the set despite being the weakest denominator — a turn
+		 * is one message, and "hello" and a full day's work are both one — but it is
+		 * the only denominator the advice cannot move, so it earns a line of its own
+		 * rather than being the only line.
+		 */
+		const TREND_SERIES = [
+			{ key: "perStep", label: "report.perStep", ink: "dshstats-ink-0", value: (day) => ratioOf(day.costNano, day.steps) },
+			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-1", value: (day) => ratioOf(day.costNano, day.edits) },
+			{ key: "perOutput", label: "report.perOutput", ink: "dshstats-ink-2", value: (day) => ratioOf(day.costNano, day.outputTokens / 1000) },
+			{ key: "perTurn", label: "report.perTurn", ink: "dshstats-ink-3", value: (day) => ratioOf(day.costNano, day.turns) }
+		];
+
+		/**
+		 * Cost per unit of work, one line per denominator, over the chosen window.
+		 *
+		 * Each line is stretched to its own range, because ¥0.004 per output token
+		 * and ¥0.20 per turn cannot share an absolute axis — so read the *shape* and
+		 * the legend's latest value, not the height. Days without a denominator are
+		 * gaps rather than zeros: a day off is not a cheap day, and a day with no
+		 * edits has no cost per edit at all.
 		 *
 		 * @param days - the merged calendar.
+		 * @param period - how many days the window spans, so the chart follows the tabs.
 		 * @param t - locale seat.
-		 * @returns the trend block, or null while there is not enough to draw.
+		 * @returns the chart, or null when there is not enough to draw.
 		 */
-		function costTrend(days, t) {
-			const points = [];
+		function costChart(days, period, t) {
 			const today = new Date();
 			today.setHours(0, 0, 0, 0);
-			for (let back = 29; back >= 0; back -= 1) {
+			const dates = [];
+			for (let back = period - 1; back >= 0; back -= 1) {
 				const date = new Date(today);
 				date.setDate(date.getDate() - back);
-				const day = days[reportDayKey(date)];
-				if (day === undefined || day.turns === 0) continue;
-				points.push({ key: reportDayKey(date), value: day.costNano / day.turns });
+				dates.push(reportDayKey(date));
 			}
-			// A line through one point is a dot, and a dot is not a trend.
-			if (points.length < 3) return null;
-			const values = points.map((point) => point.value);
-			const highest = Math.max(...values);
-			const lowest = Math.min(...values);
-			const spread = highest - lowest || highest || 1;
+			const drawn = [];
+			for (const series of TREND_SERIES) {
+				const values = dates.map((key) => {
+					const day = days[key];
+					return day === undefined ? undefined : series.value(day);
+				});
+				const known = values.filter((value) => value !== undefined && Number.isFinite(value));
+				if (known.length < 2) continue;
+				const low = Math.min(...known);
+				const high = Math.max(...known);
+				drawn.push({ series, values, low, spread: high - low || high || 1, latest: known[known.length - 1] });
+			}
+			if (drawn.length === 0) return null;
 			const width = 260;
-			const height = 40;
-			const pad = 5;
-			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, points.length - 1);
-			const atY = (value) => height - pad - ((value - lowest) / spread) * (height - pad * 2);
-			const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${atX(index).toFixed(1)} ${atY(point.value).toFixed(1)}`).join(" ");
-			const half = Math.floor(points.length / 2);
-			const early = points.slice(0, half).reduce((sum, point) => sum + point.value, 0) / Math.max(1, half);
-			const late = points.slice(half).reduce((sum, point) => sum + point.value, 0) / Math.max(1, points.length - half);
-			const delta = reportDelta(late, early, t, 30);
+			const height = 46;
+			const pad = 6;
+			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, dates.length - 1);
+			const atY = (entry, value) => height - pad - ((value - entry.low) / entry.spread) * (height - pad * 2);
+			const active = dates.filter((key) => days[key] !== undefined && days[key].turns > 0).length;
 			return h(
 				"div",
-				{ className: "dshstats-trend" },
+				{ className: "dshstats-chart" },
 				h(
 					"div",
-					{ className: "dshstats-trendHead" },
-					t("report.trend", { cost: formatRatio(points[points.length - 1].value), days: points.length }),
-					delta === null ? null : h("span", { className: "dshstats-reportDelta" }, delta)
+					{ className: "dshstats-chartHead" },
+					t("report.trend", { days: period, active }),
+					h("span", { className: "dshstats-reportDelta" }, t("report.trendFlat"))
 				),
 				h(
 					"svg",
 					{ viewBox: `0 0 ${String(width)} ${String(height)}`, preserveAspectRatio: "none", "aria-hidden": true },
-					h("path", {
-						d: path,
-						fill: "none",
-						stroke: "currentColor",
-						strokeWidth: 1.5,
-						vectorEffect: "non-scaling-stroke",
-						strokeLinejoin: "round",
-						strokeLinecap: "round"
+					drawn.map((entry) => {
+						let path = "";
+						let pen = false;
+						entry.values.forEach((value, index) => {
+							if (value === undefined || !Number.isFinite(value)) {
+								pen = false;
+								return;
+							}
+							path += `${pen ? "L" : "M"}${atX(index).toFixed(1)} ${atY(entry, value).toFixed(1)} `;
+							pen = true;
+						});
+						return h("path", {
+							key: entry.series.key,
+							className: `dshstats-series ${entry.series.ink}`,
+							d: path.trim(),
+							fill: "none",
+							strokeWidth: 1.5,
+							vectorEffect: "non-scaling-stroke",
+							strokeLinejoin: "round",
+							strokeLinecap: "round"
+						});
 					})
+				),
+				h(
+					"div",
+					{ className: "dshstats-legend" },
+					drawn.map((entry) =>
+						h(
+							"span",
+							{ key: entry.series.key, className: "dshstats-legendItem" },
+							h("span", { className: `dshstats-swatch ${entry.series.ink}` }),
+							t(entry.series.label),
+							h("span", { className: "dshstats-legendValue" }, formatRatio(entry.latest))
+						)
+					)
 				)
 			);
 		}
@@ -2084,7 +2170,7 @@ window.__ModuleLoader__.load({
 									bill === undefined
 										? h("p", { className: "dshstats-note" }, t("report.loading"))
 										: [
-												costTrend(bill, t),
+												costChart(bill, period, t) ?? h("p", { className: "dshstats-note" }, t("report.trendFew")),
 												reportBody(report, period, setPeriod, t),
 												h("p", { key: "note", className: "dshstats-note" }, t("report.note"))
 											]
