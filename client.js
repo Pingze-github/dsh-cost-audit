@@ -125,9 +125,10 @@ window.__ModuleLoader__.load({
 			"report.today": "今天",
 			"report.days": "{days} 天",
 			"report.loading": "账单还在读取（要把这台机器上每个会话都折一遍，头一次会慢一两秒）",
-			"report.trend": "单位工作量花费 · 窗口 {days} 天 · 有数据 {active} 天",
-			"report.trendFlat": "各线按自身范围拉伸 · 只看涨跌方向",
-			"report.trendFew": "趋势至少需要 2 天有活动的数据 —— 「今天」只有 1 天，切到 7 天或 30 天",
+			"report.trend": "单位工作量花费 · {active} 个工作日（窗口 {days} 天）",
+			"report.trendPeak": "高峰占比 {peak}%",
+			"report.trendNote": "已按非高峰单价折算 —— 高峰是双倍价，不折算的话「最近下午干活多」就会被看成「变贵了」。只画有活动的日子，跳过没干活的天。每条线按自身范围拉伸，所以看方向，不看高低。",
+			"report.trendFew": "趋势至少需要 2 个有活动的日子 —— 「今天」只有 1 天，切到 7 天或 30 天",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "不直接计价",
 			"adviceMoneyNote": "按涉及的钱排序；「不直接计价」的不编数字。",
@@ -280,8 +281,9 @@ window.__ModuleLoader__.load({
 			"report.today": "Today",
 			"report.days": "{days} days",
 			"report.loading": "Reading the bill — it folds every session on this machine, so the first read takes a second or two",
-			"report.trend": "Cost per unit of work · {days}-day window · {active} days with data",
-			"report.trendFlat": "each line stretched to its own range · read the direction",
+			"report.trend": "Cost per unit of work · {active} working days (of {days})",
+			"report.trendPeak": "peak {peak}%",
+			"report.trendNote": "Rebased to off-peak prices — the peak window bills at double, so without this, more afternoon work lately reads as it got dearer. Only days with activity are drawn. Each line is stretched to its own range, so read the direction, not the height.",
 			"report.trendFew": "A trend needs at least 2 days with activity — Today is one; try 7 or 30 days",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "not priced",
@@ -1676,11 +1678,29 @@ window.__ModuleLoader__.load({
 		 * rather than being the only line.
 		 */
 		const TREND_SERIES = [
-			{ key: "perStep", label: "report.perStep", ink: "dshstats-ink-0", value: (day) => ratioOf(day.costNano, day.steps) },
-			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-1", value: (day) => ratioOf(day.costNano, day.edits) },
-			{ key: "perOutput", label: "report.perOutput", ink: "dshstats-ink-2", value: (day) => ratioOf(day.costNano, day.outputTokens / 1000) },
-			{ key: "perTurn", label: "report.perTurn", ink: "dshstats-ink-3", value: (day) => ratioOf(day.costNano, day.turns) }
+			{ key: "perStep", label: "report.perStep", ink: "dshstats-ink-0", value: (day) => ratioOf(offPeakCost(day), day.steps) },
+			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-1", value: (day) => ratioOf(offPeakCost(day), day.edits) },
+			{ key: "perOutput", label: "report.perOutput", ink: "dshstats-ink-2", value: (day) => ratioOf(offPeakCost(day), day.outputTokens / 1000) },
+			{ key: "perTurn", label: "report.perTurn", ink: "dshstats-ink-3", value: (day) => ratioOf(offPeakCost(day), day.turns) }
 		];
+
+		/**
+		 * The day's cost as if every token had been billed off-peak.
+		 *
+		 * Without this the trend is not a trend: the peak window bills at exactly
+		 * double, so a week with more afternoon work rises on the chart even though
+		 * nothing about how the work was done changed. Peak is exactly 2× off-peak on
+		 * every line of the price table, so halving the peak share is arithmetic
+		 * rather than an approximation — no information is lost, the tariff is just
+		 * held constant. The actual money stays in the table above, and the window's
+		 * peak share is reported next to the chart.
+		 *
+		 * @param day - one calendar day's bucket.
+		 * @returns the off-peak-equivalent cost.
+		 */
+		function offPeakCost(day) {
+			return day.peakCostNano / 2 + day.offPeakCostNano;
+		}
 
 		/**
 		 * Cost per unit of work, one line per denominator, over the chosen window.
@@ -1705,20 +1725,20 @@ window.__ModuleLoader__.load({
 				date.setDate(date.getDate() - back);
 				dates.push(reportDayKey(date));
 			}
-			// The axis starts at the first day that has anything. A window that
-			// begins before this machine had any data spends most of its width on
-			// empty days and squeezes the line into the right-hand third, which reads
-			// as a bug and was reported as one. The *window* is what was asked for,
-			// the *axis* is what can be drawn, and the caption says both.
-			const first = dates.findIndex((key) => days[key] !== undefined);
-			if (first === -1) return null;
-			const span = dates.slice(first);
+			// One slot per day that has anything, not one slot per calendar day.
+			//
+			// A time-true axis was tried twice and read as broken both times: this
+			// machine has ten days of data in a thirty-day window with a week of
+			// nothing in the middle, so the line came out as a dot, a wide gap, a
+			// segment and another dot — mostly empty field, reported twice as "the X
+			// range is squeezed" even after the axis was fitted to the data. Skipping
+			// the empty days is the honest spelling of what this chart is: a sequence
+			// of working days, not a calendar. The caption says the count.
+			const observed = dates.filter((key) => days[key] !== undefined);
+			if (observed.length < 2) return null;
 			const drawn = [];
 			for (const series of TREND_SERIES) {
-				const values = span.map((key) => {
-					const day = days[key];
-					return day === undefined ? undefined : series.value(day);
-				});
+				const values = observed.map((key) => series.value(days[key]));
 				const known = values.filter((value) => value !== undefined && Number.isFinite(value));
 				if (known.length < 2) continue;
 				const low = Math.min(...known);
@@ -1729,20 +1749,19 @@ window.__ModuleLoader__.load({
 			const width = 260;
 			const height = 46;
 			const pad = 6;
-			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, span.length - 1);
+			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, observed.length - 1);
 			const atY = (entry, value) => height - pad - ((value - entry.low) / entry.spread) * (height - pad * 2);
-			// `span` still contains the gap days after the first one with data, so this
-			// has to guard: reading `.turns` off a gap threw, the slot boundary caught
-			// it, and the whole card disappeared.
-			const active = span.filter((key) => days[key] !== undefined && days[key].turns > 0).length;
+			const windowCost = observed.reduce((sum, key) => sum + days[key].costNano, 0);
+			const windowPeak = observed.reduce((sum, key) => sum + days[key].peakCostNano, 0);
+			const peakShare = windowCost === 0 ? 0 : Math.round((windowPeak / windowCost) * 100);
 			return h(
 				"div",
-				{ className: "dshstats-chart" },
+				{ className: "dshstats-chart", title: t("report.trendNote") },
 				h(
 					"div",
 					{ className: "dshstats-chartHead" },
-					t("report.trend", { days: period, active }),
-					h("span", { className: "dshstats-reportDelta" }, t("report.trendFlat"))
+					t("report.trend", { days: period, active: observed.length }),
+					h("span", { className: "dshstats-reportDelta" }, t("report.trendPeak", { peak: peakShare }))
 				),
 				h(
 					"svg",
