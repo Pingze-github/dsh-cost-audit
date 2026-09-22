@@ -75,12 +75,35 @@ let socket;
 let nextId = 1;
 const pending = new Map();
 const consoleErrors = [];
+const blockedForeign = [];
+const stoppedNavigations = [];
+const foreignRequests = [];
+
+/** No CDP call may hang the probe: a navigated-away target swallows responses. */
+const SEND_TIMEOUT_MS = 90000;
 
 function send(method, params = {}) {
 	const id = nextId++;
-	socket.send(JSON.stringify({ id, method, params }));
+	try {
+		socket.send(JSON.stringify({ id, method, params }));
+	} catch (error) {
+		return Promise.reject(new Error(`gui-probe: ${method} could not be sent (${String(error?.message ?? error)})`));
+	}
 	return new Promise((resolve, reject) => {
-		pending.set(id, { resolve, reject });
+		const timer = setTimeout(() => {
+			pending.delete(id);
+			reject(new Error(`gui-probe: ${method} did not answer within ${String(SEND_TIMEOUT_MS)}ms`));
+		}, SEND_TIMEOUT_MS);
+		pending.set(id, {
+			resolve: (value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			reject: (error) => {
+				clearTimeout(timer);
+				reject(error);
+			}
+		});
 	});
 }
 
@@ -120,6 +143,54 @@ async function main() {
 			else seat?.resolve(message.result ?? {});
 			return;
 		}
+		// The page under test loads content from a site a session once fetched, and
+		// that page's own scripts navigate the inspected target away — taking the
+		// probe's target with them. Verification cannot be at the mercy of a foreign
+		// page, so everything that is not this app is refused at the browser, and
+		// what was refused is reported rather than silently dropped.
+		if (message.method === "Fetch.requestPaused") {
+			const held = message.params;
+			const target = held?.request?.url ?? "";
+			if (/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(target)) {
+				send("Fetch.continueRequest", { requestId: held.requestId }).catch(() => {});
+			} else if (message.params.resourceType === "Document") {
+				// Failing a navigation leaves its own error page behind, which is how
+				// "blocked" turned into losing the page under test. A 204 is a
+				// navigation the browser declines to perform: the document stays put.
+				stoppedNavigations.push({ url: target, resourceType: message.params.resourceType });
+				send("Fetch.fulfillRequest", { requestId: held.requestId, responseCode: 204, responseHeaders: [] }).catch(() => {});
+			} else {
+				blockedForeign.push(target);
+				send("Fetch.failRequest", { requestId: held.requestId, errorReason: "BlockedByClient" }).catch(() => {});
+			}
+			return;
+		}
+		// Refusing the load is not enough: the app's document is already gone by
+		// then, replaced by a network error page. The navigation itself is what has
+		// to be cancelled, so the page under test stays under test.
+		if (message.method === "Page.frameScheduledNavigation" || message.method === "Page.frameRequestedNavigation") {
+			const target = message.params?.url ?? "";
+			if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(target)) {
+				stoppedNavigations.push({ url: target, reason: message.params?.reason ?? "unknown" });
+				send("Page.stopLoading", {}).catch(() => {});
+			}
+			return;
+		}
+		// Who asked for it: the initiator names the script and the line, which is
+		// the difference between "a foreign page" and "this bundle, here".
+		if (message.method === "Network.requestWillBeSent") {
+			const held = message.params;
+			const target = held?.request?.url ?? "";
+			if (/^https?:\/\//.test(target) && !/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(target) && foreignRequests.length < 6) {
+				foreignRequests.push({
+					url: target,
+					type: held.type,
+					from: held.documentURL,
+					initiator: held.initiator?.type,
+					stack: (held.initiator?.stack?.callFrames ?? []).slice(0, 2).map((frame) => `${frame.functionName || "?"}@${(frame.url || "").slice(0, 90)}:${frame.lineNumber}`)
+				});
+			}
+		}
 		if (message.method === "Runtime.exceptionThrown") {
 			consoleErrors.push(message.params.exceptionDetails?.exception?.description ?? message.params.exceptionDetails?.text ?? "exception");
 		}
@@ -130,6 +201,8 @@ async function main() {
 
 	await send("Page.enable");
 	await send("Runtime.enable");
+	await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+	await send("Network.enable");
 	await send("Page.addScriptToEvaluateOnNewDocument", { source: POLYFILL });
 	if (sessionId !== undefined) {
 		const seed = `try { localStorage.setItem("dsh.sessions.current", JSON.stringify({ sessionId: ${JSON.stringify(sessionId)} })); } catch {}`;
@@ -164,11 +237,27 @@ async function main() {
 	// Let the last paint settle before capturing.
 	await delay(1200);
 
-	const report = await evaluate(`(() => (${reportExpr}))()`);
-	const shot = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
-	if (out !== undefined) writeFileSync(out, Buffer.from(shot.data, "base64"));
+	let report = null;
+	let failure = null;
+	try {
+		report = await evaluate(`(() => (${reportExpr}))()`);
+	} catch (error) {
+		failure = String(error?.message ?? error);
+	}
+	if (out !== undefined) {
+		// Only when a picture was asked for, and never unbounded: a target that
+		// navigated away swallows this response forever, and the probe then dies at
+		// the caller's timeout having printed nothing at all.
+		try {
+			const shot = await Promise.race([
+				send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }),
+				delay(5000).then(() => null)
+			]);
+			if (shot !== null) writeFileSync(out, Buffer.from(shot.data, "base64"));
+		} catch {}
+	}
 
-	process.stdout.write(`${JSON.stringify({ report, consoleErrors }, null, 1)}\n`);
+	process.stdout.write(`${JSON.stringify({ report, failure, consoleErrors, blockedCount: blockedForeign.length, stoppedNavigations, foreignRequests }, null, 1)}\n`);
 }
 
 main()

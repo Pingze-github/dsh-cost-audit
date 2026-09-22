@@ -295,3 +295,21 @@ curl -s -X POST -H 'content-type: application/json' -H 'Origin: http://127.0.0.1
 
 `GET /_dsh/hotswap/state` lists every loader entry with its phase — the quickest
 way to confirm a plugin is `active`.
+
+**The probe fences foreign origins, and must never hang.** The app page ends up
+loading a page from a site one of these sessions once fetched, and that page
+navigates the inspected target away — taking the probe's target with it, which is
+why so many runs died as "could not attach" with no output at all. `gui-probe.mjs`
+now refuses every non-loopback http(s) request, answers a foreign **Document**
+navigation with `204` (failing it is not enough: the failure page replaces the
+document under test), skips the screenshot unless `--out` was asked for, and
+bounds every CDP call at 90 s. `gui-views.mjs` prints what was refused and repeats
+the probe's own last line when it cannot attach. The trigger is intermittent and
+time-based: a short walk (open the card, click the third view) completes, the long
+three-view walk can still lose the target — and when it does, the output now says
+which URL did it.
+
+**A hang is not a result.** The 120 s `spawnSync` timeout used to kill the probe
+before it printed anything, so three consecutive runs reported "could not attach"
+with no cause. Any new CDP call in the probe needs the same treatment as `send`:
+a bounded promise whose rejection is caught and reported.

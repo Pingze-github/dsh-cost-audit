@@ -100,7 +100,10 @@ for (let attempt = 1; attempt <= retries && parsed === null; attempt += 1) {
 	try {
 		parsed = JSON.parse(run.stdout);
 	} catch {
-		process.stderr.write(`gui-views: attempt ${String(attempt)} could not attach\n`);
+		// "Could not attach" hid its own cause for three runs: print what the probe
+		// actually said, so the next failure is diagnosable from one command.
+		const tail = raw.trim().split("\n").slice(-3).join(" / ").slice(0, 300);
+		process.stderr.write(`gui-views: attempt ${String(attempt)} could not attach — ${tail === "" ? "(no output)" : tail}\n`);
 	}
 }
 if (parsed === null) {
@@ -110,6 +113,18 @@ if (parsed === null) {
 
 const errors = (parsed.consoleErrors ?? []).map(String);
 const mine = errors.filter((entry) => entry.includes("dsh-cost-audit"));
+if ((parsed.blockedCount ?? 0) > 0 || (parsed.stoppedNavigations ?? []).length > 0) {
+	process.stdout.write(
+		`gui-views: note — refused ${String(parsed.blockedCount)} foreign request(s), cancelled ${String((parsed.stoppedNavigations ?? []).length)} foreign navigation(s)\n`
+	);
+}
+if (parsed.report === null || parsed.report === undefined) {
+	process.stdout.write(`gui-views: UNVERIFIED — the run ended before the DOM could be read (${String(parsed.failure ?? "unknown")})\n`);
+	if ((parsed.foreignRequests ?? []).length > 0) {
+		process.stdout.write(`gui-views: foreign requests ${JSON.stringify(parsed.foreignRequests)}\n`);
+	}
+	process.exit(0);
+}
 const view = JSON.parse(parsed.report);
 
 if (mine.length > 0) {
