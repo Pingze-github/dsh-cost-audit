@@ -36,33 +36,45 @@ const retries = Number(arg("--retries", "2"));
 // under test sometimes navigates away mid-report; a faster run fails less often.
 const EXPRESSION = `new Promise((resolve) => {
   const out = { pills: [...document.querySelectorAll(".dshstats-pill")].map((n) => n.innerText) };
-  const pick = (label) => [...document.querySelectorAll(".dshstats-switchButton")].find((n) => n.innerText === label);
-  const park = (selector) => document.querySelector(selector) ?? document.querySelector(selector);
-  const advice = park(".dshstats-pill-warn") ?? park(".dshstats-pill-high") ?? park(".dshstats-pill-info");
   if (out.pills.length === 0) { resolve(JSON.stringify(out)); return; }
-  document.querySelector("[data-dsh-stats-session] .dshstats-pill")?.click();
-  setTimeout(() => {
+  const waitFor = (fn, ms) =>
+    new Promise((done) => {
+      const started = Date.now();
+      const tick = () => {
+        if (fn()) { done(true); return; }
+        if (Date.now() - started > ms) { done(false); return; }
+        setTimeout(tick, 150);
+      };
+      tick();
+    });
+  const pick = (label) => [...document.querySelectorAll(".dshstats-switchButton")].find((n) => n.innerText === label);
+  const advice = document.querySelector(".dshstats-pill-warn") ?? document.querySelector(".dshstats-pill-high") ?? document.querySelector(".dshstats-pill-info");
+  (async () => {
+    document.querySelector("[data-dsh-stats-session] .dshstats-pill")?.click();
+    await waitFor(() => document.querySelector(".dshstats-details dt"), 6000);
     out.sessionRows = [...document.querySelectorAll(".dshstats-details dt")].map((n) => n.innerText);
     document.querySelector("[data-dsh-stats-session] .dshstats-pill")?.click();
-    setTimeout(() => {
-      if (!advice) { out.advice = "none"; resolve(JSON.stringify(out)); return; }
-      advice.click();
-      setTimeout(() => {
-        out.adviceTitles = [...document.querySelectorAll(".dshstats-adviceTitle")].map((n) => n.innerText);
-        const bill = pick("全账号账单") ?? pick("Whole-account bill");
-        if (!bill) { out.bill = "no-switch"; resolve(JSON.stringify(out)); return; }
-        bill.click();
-        setTimeout(() => {
-          out.bill = Boolean(document.querySelector(".dshstats-chart"));
-          out.series = document.querySelectorAll(".dshstats-series path").length;
-          out.legend = [...document.querySelectorAll(".dshstats-legendItem")].map((n) => n.innerText.replace(/\\n/g, " "));
-          out.reportRows = document.querySelectorAll(".dshstats-reportRow").length;
-          out.chartHead = (document.querySelector(".dshstats-chartHead")?.innerText ?? "").replace(/\\n/g, " | ");
-          resolve(JSON.stringify(out));
-        }, 900);
-      }, 1100);
-    }, 700);
-  }, 900);
+    if (!advice) { out.advice = "none"; resolve(JSON.stringify(out)); return; }
+    advice.click();
+    await waitFor(() => document.querySelector(".dshstats-adviceTitle"), 6000);
+    out.adviceTitles = [...document.querySelectorAll(".dshstats-adviceTitle")].map((n) => n.innerText);
+    const bill = await waitFor(() => pick("全账号账单") ?? pick("Whole-account bill"), 6000);
+    if (!bill) { out.bill = "no-switch"; resolve(JSON.stringify(out)); return; }
+    bill.click();
+    // The bill folds every session on the machine before it can draw, so this
+    // waits for the chart rather than for a fixed number of milliseconds.
+    const drawn = await waitFor(() => document.querySelector(".dshstats-series path"), 20000);
+    out.bill = Boolean(document.querySelector(".dshstats-chart"));
+    out.waited = drawn;
+    out.series = document.querySelectorAll(".dshstats-series path").length;
+    out.legend = [...document.querySelectorAll(".dshstats-legendItem")].map((n) => n.innerText.replace(/\\n/g, " "));
+    out.reportRows = document.querySelectorAll(".dshstats-reportRow").length;
+    out.chartHead = (document.querySelector(".dshstats-chartHead")?.innerText ?? "").replace(/\\n/g, " | ");
+    out.switches = [...document.querySelectorAll(".dshstats-switchButton")].map(
+      (n) => n.innerText + (n.getAttribute("aria-selected") === "true" ? "*" : "")
+    );
+    resolve(JSON.stringify(out));
+  })();
 })`;
 
 const probe = join(dirname(fileURLToPath(import.meta.url)), "gui-probe.mjs");
@@ -110,6 +122,7 @@ if (view.bill === true) {
 	}
 	process.stdout.write(`gui-views: bill ${String(view.series)} series · ${String(view.reportRows)} rows · ${view.chartHead}\n`);
 	process.stdout.write(`gui-views: legend ${JSON.stringify(view.legend)}\n`);
+	process.stdout.write(`gui-views: switches ${JSON.stringify(view.switches)} (* = selected)\n`);
 } else {
 	process.stdout.write(`gui-views: UNVERIFIED — the bill view did not open (${String(view.bill)})\n`);
 }

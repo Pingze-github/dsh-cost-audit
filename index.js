@@ -591,6 +591,28 @@ const dayShape = {
   outputTokens: z.number().int().nonnegative(),
   reasoningTokens: z.number().int().nonnegative(),
   turns: z.number().int().nonnegative(),
+  /**
+   * The same denominators again, counted only for requests billed at peak.
+   *
+   * Splitting the price by tariff is not enough to answer "is this cheaper":
+   * a week with more afternoon work rises even after the rates are equalised,
+   * because the *sample* moved. These twins are what lets the bill be recomputed
+   * over one tariff window at a time. Filled by `addDay`, never by hand.
+   */
+  peakTurns: z.number().int().nonnegative(),
+  peakSteps: z.number().int().nonnegative(),
+  peakEdits: z.number().int().nonnegative(),
+  peakRequests: z.number().int().nonnegative(),
+  peakOutputTokens: z.number().int().nonnegative(),
+  peakReasoningTokens: z.number().int().nonnegative(),
+  peakCacheReadTokens: z.number().int().nonnegative(),
+  peakUncachedInputTokens: z.number().int().nonnegative(),
+  peakCacheWriteTokens: z.number().int().nonnegative(),
+  peakCacheReadCostNano: z.number().int().nonnegative(),
+  peakUncachedCostNano: z.number().int().nonnegative(),
+  peakOutputCostNano: z.number().int().nonnegative(),
+  peakCompactions: z.number().int().nonnegative(),
+  peakCompactionCostNano: z.number().int().nonnegative(),
   steps: z.number().int().nonnegative(),
   toolCalls: z.number().int().nonnegative(),
   edits: z.number().int().nonnegative(),
@@ -613,11 +635,49 @@ const ZERO_DAY = Object.freeze(Object.fromEntries(DAY_FIELDS.map((field) => [fie
  * @param delta - the fields to add.
  * @returns the next calendar map.
  */
+/**
+ * The day fields that carry a peak-only twin. Everything the bill divides by, and
+ * everything it breaks the cost into, so any basis it offers is recomputable.
+ */
+const PEAK_TWINS = Object.freeze([
+  "turns",
+  "steps",
+  "edits",
+  "requests",
+  "outputTokens",
+  "reasoningTokens",
+  "cacheReadTokens",
+  "uncachedInputTokens",
+  "cacheWriteTokens",
+  "cacheReadCostNano",
+  "uncachedCostNano",
+  "outputCostNano",
+  "compactions",
+  "compactionCostNano",
+]);
+
+/** The same delta with every twinned field also added to its peak-side twin. */
+function withPeakMirror(delta) {
+  let mirrored = delta;
+  for (const field of PEAK_TWINS) {
+    const value = delta[field];
+    if (typeof value === "number" && value !== 0) {
+      const twin = `peak${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+      mirrored = { ...mirrored, [twin]: (mirrored[twin] ?? 0) + value };
+    }
+  }
+  return mirrored;
+}
+
 function addDay(days, time, delta) {
   const key = dayOf(time);
   const previous = days[key] ?? ZERO_DAY;
+  // The mirror happens here, once, rather than at the eight call sites: every
+  // field the bill can restrict to a tariff window is twinned in the same place
+  // it is totalled, so no caller can forget.
+  const full = isPeak(time) ? withPeakMirror(delta) : delta;
   const next = {};
-  for (const field of DAY_FIELDS) next[field] = Math.max(0, previous[field] + (delta[field] ?? 0));
+  for (const field of DAY_FIELDS) next[field] = Math.max(0, previous[field] + (full[field] ?? 0));
   return { ...days, [key]: next };
 }
 

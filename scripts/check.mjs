@@ -1134,4 +1134,34 @@ function toolCalls(count, name, args, ms, time) {
 	}
 }
 
+{
+	// A peak settlement fills both the total and the peak twin; an off-peak one
+	// fills only the total. This is what makes "peak only / off-peak only" possible
+	// without a second fold. Steps land on `step/end`, so the sequence is built.
+	const usage = { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1000 };
+	const dayAt = (time) => {
+		const days = fold([
+			route("deepseek-flash"),
+			{ type: "step/start", seq: 1, time, data: { turn: 1, step: 1 } },
+			settle(1, 1, usage, time),
+			{ type: "step/end", seq: 3, time, data: { turn: 1, step: 1 } }
+		]).view.days;
+		return days[Object.keys(days)[0]];
+	};
+
+	const atPeak = dayAt(PEAK);
+	assert.equal(atPeak.steps, 1, "the peak step is counted overall");
+	assert.equal(atPeak.peakSteps, 1, "and on the peak side, because it happened at peak");
+	assert.equal(atPeak.requests, 1, "the request is counted overall");
+	assert.equal(atPeak.peakRequests, 1, "and on the peak side");
+	assert.equal(atPeak.peakOutputTokens, 1000, "splitting tokens as well as money");
+	assert.equal(atPeak.peakOutputCostNano, atPeak.outputCostNano, "and the output cost with them");
+
+	const atOff = dayAt(1789876800000);
+	assert.equal(atOff.steps, 1, "the off-peak step is still counted overall");
+	assert.equal(atOff.peakSteps, 0, "but not on the peak side");
+	assert.equal(atOff.peakRequests, 0, "and neither is its request");
+	assert.equal(atOff.peakOutputTokens, 0, "and no tokens either");
+}
+
 process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} connection routes)\n`);

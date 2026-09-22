@@ -61,6 +61,20 @@ window.__ModuleLoader__.load({
 			"outputTokens",
 			"reasoningTokens",
 			"turns",
+			"peakTurns",
+			"peakSteps",
+			"peakEdits",
+			"peakRequests",
+			"peakOutputTokens",
+			"peakReasoningTokens",
+			"peakCacheReadTokens",
+			"peakUncachedInputTokens",
+			"peakCacheWriteTokens",
+			"peakCacheReadCostNano",
+			"peakUncachedCostNano",
+			"peakOutputCostNano",
+			"peakCompactions",
+			"peakCompactionCostNano",
 			"steps",
 			"toolCalls",
 			"edits",
@@ -131,8 +145,11 @@ window.__ModuleLoader__.load({
 			"report.days": "{days} 天",
 			"report.loading": "账单还在读取（要把这台机器上每个会话都折一遍，头一次会慢一两秒）",
 			"report.trend": "单位工作量花费 · {active} 个工作日（窗口 {days} 天）",
-			"report.trendPeak": "高峰占比 {peak}%",
-			"report.trendNote": "已按非高峰单价折算 —— 高峰是双倍价，不折算的话「最近下午干活多」就会被看成「变贵了」。只画有活动的日子，跳过没干活的天。每条线按自身范围拉伸，所以看方向，不看高低。",
+			"report.trendNote": "「全部」= 峰谷混在一起的原价；「高峰 / 非高峰」= 只算那个时段的请求，分子分母都是同一批样本。只画有活动的日子。每条线按自身范围拉伸，所以看方向，不看高低。",
+			"report.basisAll": "全部",
+			"report.basisPeak": "高峰",
+			"report.basisOffpeak": "非高峰",
+			"report.scope": "{label} · {count} 次请求",
 			"report.trendFew": "趋势至少需要 2 个有活动的日子 —— 「今天」只有 1 天，切到 7 天或 30 天",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "不直接计价",
@@ -294,8 +311,11 @@ window.__ModuleLoader__.load({
 			"report.days": "{days} days",
 			"report.loading": "Reading the bill — it folds every session on this machine, so the first read takes a second or two",
 			"report.trend": "Cost per unit of work · {active} working days (of {days})",
-			"report.trendPeak": "peak {peak}%",
-			"report.trendNote": "Rebased to off-peak prices — the peak window bills at double, so without this, more afternoon work lately reads as it got dearer. Only days with activity are drawn. Each line is stretched to its own range, so read the direction, not the height.",
+			"report.trendNote": "All mixes both tariffs at their own prices; Peak and Off-peak count only the requests from that window, numerator and denominator from the same sample. Only days with activity are drawn. Each line is stretched to its own range, so read the direction, not the height.",
+			"report.basisAll": "All",
+			"report.basisPeak": "Peak",
+			"report.basisOffpeak": "Off-peak",
+			"report.scope": "{label} · {count} requests",
 			"report.trendFew": "A trend needs at least 2 days with activity — Today is one; try 7 or 30 days",
 			"adviceMoney": "{cost} · {share}%",
 			"adviceUnpriced": "not priced",
@@ -1582,26 +1602,32 @@ window.__ModuleLoader__.load({
 		 * @param t - locale seat.
 		 * @returns the headline plus rows, or null when there is nothing to show.
 		 */
-		function reportRows(report, period, t) {
+		function reportRows(report, period, basis, t) {
 			const days = report !== undefined && report.ok === true ? report.days : undefined;
 			if (days === undefined) return null;
 			const now = reportWindow(days, 0, period);
 			const before = reportWindow(days, period, period);
 			if (now.requests === 0 && before.requests === 0) return null;
-			const prompt = now.cacheReadTokens + now.uncachedInputTokens + now.cacheWriteTokens;
-			const pastPrompt = before.cacheReadTokens + before.uncachedInputTokens + before.cacheWriteTokens;
-			const perStep = ratioOf(now.costNano, now.steps);
-			const perTurn = ratioOf(now.costNano, now.turns);
-			const perEdit = ratioOf(now.costNano, now.edits);
+			// Every ratio is computed from the chosen tariff window, numerator and
+			// denominator alike: restricting only the money would have produced a
+			// number that means nothing.
+			const cost = basisCost(now, basis);
+			const pastCost = basisCost(before, basis);
+			const prompt = basisPart(now, "cacheReadTokens", basis) + basisPart(now, "uncachedInputTokens", basis) + basisPart(now, "cacheWriteTokens", basis);
+			const pastPrompt = basisPart(before, "cacheReadTokens", basis) + basisPart(before, "uncachedInputTokens", basis) + basisPart(before, "cacheWriteTokens", basis);
+			const perStep = ratioOf(cost, basisPart(now, "steps", basis));
+			const perTurn = ratioOf(cost, basisPart(now, "turns", basis));
+			const perEdit = ratioOf(cost, basisPart(now, "edits", basis));
 			// Answer tokens, not output tokens: thinking is 57% of the output line on
 			// this machine, so dividing by the total hides exactly the thing the user
 			// asked about — thinking growing while the answers did not.
-			const answerTokens = Math.max(0, now.outputTokens - now.reasoningTokens);
-			const perAnswer = ratioOf(now.costNano, answerTokens / 1000);
-			const hit = ratioOf(now.cacheReadTokens, prompt);
+			const answerTokens = Math.max(0,
+				basisPart(now, "outputTokens", basis) - basisPart(now, "reasoningTokens", basis));
+			const perAnswer = ratioOf(cost, answerTokens / 1000);
+			const hit = ratioOf(basisPart(now, "cacheReadTokens", basis), prompt);
 			return {
-				total: formatCny(now.costNano),
-				totalDelta: reportDelta(now.costNano, before.costNano, t, period),
+				total: formatCny(cost),
+				totalDelta: reportDelta(cost, pastCost, t, period),
 				// Work-shaped denominators first, the human's own last: a turn is one
 				// message, and a one-word message and a full day's work are both one,
 				// so it is a habit measure rather than a work measure.
@@ -1611,14 +1637,14 @@ window.__ModuleLoader__.load({
 						label: t("report.perStep"),
 						detail: t("report.perStepDetail"),
 						value: formatRatio(perStep),
-						delta: reportDelta(perStep, ratioOf(before.costNano, before.steps), t, period)
+						delta: reportDelta(perStep, ratioOf(pastCost, basisPart(before, "steps", basis)), t, period)
 					},
 					{
 						key: "perEdit",
 						label: t("report.perEdit"),
 						detail: t("report.perEditDetail"),
 						value: formatRatio(perEdit),
-						delta: reportDelta(perEdit, ratioOf(before.costNano, before.edits), t, period)
+						delta: reportDelta(perEdit, ratioOf(pastCost, basisPart(before, "edits", basis)), t, period)
 					},
 					{
 						key: "perOutput",
@@ -1627,7 +1653,13 @@ window.__ModuleLoader__.load({
 						value: formatRatio(perAnswer),
 						delta: reportDelta(
 							perAnswer,
-							ratioOf(before.costNano, Math.max(0, before.outputTokens - before.reasoningTokens) / 1000),
+							ratioOf(
+								pastCost,
+								Math.max(
+									0,
+									basisPart(before, "outputTokens", basis) - basisPart(before, "reasoningTokens", basis)
+								) / 1000
+							),
 							t,
 							period
 						)
@@ -1637,28 +1669,38 @@ window.__ModuleLoader__.load({
 						label: t("report.perTurn"),
 						detail: t("report.perTurnDetail"),
 						value: formatRatio(perTurn),
-						delta: reportDelta(perTurn, ratioOf(before.costNano, before.turns), t, period)
+						delta: reportDelta(perTurn, ratioOf(pastCost, basisPart(before, "turns", basis)), t, period)
 					},
 					{
 						key: "hit",
 						label: t("report.hit"),
 						detail: t("report.hitDetail"),
 						value: hit === undefined ? "—" : `${String(Math.round(hit * 1000) / 10)}%`,
-						delta: reportDelta(hit, ratioOf(before.cacheReadTokens, pastPrompt), t, period)
+						delta: reportDelta(hit, ratioOf(basisPart(before, "cacheReadTokens", basis), pastPrompt), t, period)
 					},
 					{
 						key: "split",
 						label: t("report.split"),
 						detail: t("report.splitDetail"),
-						value: `${formatCny(now.cacheReadCostNano)} / ${formatCny(now.uncachedCostNano)} / ${formatCny(now.outputCostNano)}`,
+						value: `${formatCny(basisPart(now, "cacheReadCostNano", basis))} / ${formatCny(basisPart(now, "uncachedCostNano", basis))} / ${formatCny(basisPart(now, "outputCostNano", basis))}`,
 						delta: null
 					},
-					{ key: "compaction", label: t("report.compaction"), detail: t("report.compactionDetail"), value: formatCny(now.compactionCostNano), delta: null },
+					{
+						key: "compaction",
+						label: t("report.compaction"),
+						detail: t("report.compactionDetail"),
+						value: formatCny(basisPart(now, "compactionCostNano", basis)),
+						delta: null
+					},
 					{
 						key: "peak",
 						label: t("report.peak"),
 						detail: t("report.peakDetail"),
-						value: now.costNano === 0 ? "—" : `${String(Math.round((now.peakCostNano / now.costNano) * 1000) / 10)}%`,
+						// The share of a single window is 0% or 100% by construction, so it
+						// is only a reading when all of them are in the sample.
+						value: basis !== "all" || now.costNano === 0
+							? "—"
+							: `${String(Math.round((now.peakCostNano / now.costNano) * 1000) / 10)}%`,
 						delta: null
 					}
 				]
@@ -1666,8 +1708,8 @@ window.__ModuleLoader__.load({
 		}
 
 		/** The report's own panel body: window tabs, headline, rows, boundaries. */
-		function reportBody(report, period, setPeriod, t) {
-			const rows = reportRows(report, period, t);
+		function reportBody(report, period, setPeriod, basis, setBasis, t) {
+			const rows = reportRows(report, period, basis, t);
 			if (rows === null) return null;
 			const items = rows.items.map((item) =>
 				h(
@@ -1701,6 +1743,24 @@ window.__ModuleLoader__.load({
 				),
 				h(
 					"div",
+					{ className: "dshstats-switch", role: "tablist" },
+					REPORT_BASES.map((value) =>
+						h(
+							"button",
+							{
+								key: value,
+								type: "button",
+								role: "tab",
+								"aria-selected": value === basis,
+								className: `dshstats-switchButton${value === basis ? " dshstats-switchOn" : ""}`,
+								onClick: () => setBasis(value)
+							},
+							t(BASIS_LABELS[value])
+						)
+					)
+				),
+				h(
+					"div",
 					{ className: "dshstats-reportTotal" },
 					rows.total,
 					rows.totalDelta === null ? null : h("span", { className: "dshstats-reportDelta" }, rows.totalDelta)
@@ -1725,33 +1785,81 @@ window.__ModuleLoader__.load({
 		 * rather than being the only line.
 		 */
 		const TREND_SERIES = [
-			{ key: "perStep", label: "report.perStep", ink: "dshstats-ink-0", value: (day) => ratioOf(offPeakCost(day), day.steps) },
-			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-1", value: (day) => ratioOf(offPeakCost(day), day.edits) },
+			{ key: "perStep", label: "report.perStep", ink: "dshstats-ink-0", value: (day, basis) => ratioOf(basisCost(day, basis), basisPart(day, "steps", basis)) },
+			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-1", value: (day, basis) => ratioOf(basisCost(day, basis), basisPart(day, "edits", basis)) },
 			{
 				key: "perAnswer",
 				label: "report.perOutput",
 				ink: "dshstats-ink-2",
-				value: (day) => ratioOf(offPeakCost(day), Math.max(0, day.outputTokens - day.reasoningTokens) / 1000)
+				value: (day, basis) =>
+					ratioOf(
+						basisCost(day, basis),
+						Math.max(0, basisPart(day, "outputTokens", basis) - basisPart(day, "reasoningTokens", basis)) / 1000
+					)
 			},
-			{ key: "perTurn", label: "report.perTurn", ink: "dshstats-ink-3", value: (day) => ratioOf(offPeakCost(day), day.turns) }
+			{ key: "perTurn", label: "report.perTurn", ink: "dshstats-ink-3", value: (day, basis) => ratioOf(basisCost(day, basis), basisPart(day, "turns", basis)) }
 		];
 
+		/** The bases the bill can be computed on, in switch order. */
+		const REPORT_BASES = Object.freeze(["all", "peak", "offpeak"]);
+		const BASIS_LABELS = Object.freeze({
+			all: "report.basisAll",
+			peak: "report.basisPeak",
+			offpeak: "report.basisOffpeak"
+		});
+
 		/**
-		 * The day's cost as if every token had been billed off-peak.
+		 * One window's total cost, restricted to the chosen tariff window.
 		 *
-		 * Without this the trend is not a trend: the peak window bills at exactly
-		 * double, so a week with more afternoon work rises on the chart even though
-		 * nothing about how the work was done changed. Peak is exactly 2× off-peak on
-		 * every line of the price table, so halving the peak share is arithmetic
-		 * rather than an approximation — no information is lost, the tariff is just
-		 * held constant. The actual money stays in the table above, and the window's
-		 * peak share is reported next to the chart.
+		 * The rebase-to-off-peak trick this replaces removed the *rates* from the
+		 * trend but not the *sample*: a week with more afternoon work still moved,
+		 * because which requests were counted had changed. Splitting the counts in
+		 * the fold lets the bill be recomputed over one window at a time instead, so
+		 * a tariff reading and a workload reading stop disagreeing.
 		 *
-		 * @param day - one calendar day's bucket.
-		 * @returns the off-peak-equivalent cost.
+		 * @param window - a summed window.
+		 * @param basis - "all", "peak" or "offpeak".
+		 * @returns the cost in nano-CNY.
 		 */
-		function offPeakCost(day) {
-			return day.peakCostNano / 2 + day.offPeakCostNano;
+		function basisCost(window, basis) {
+			if (basis === "peak") return window.peakCostNano;
+			if (basis === "offpeak") return Math.max(0, window.costNano - window.peakCostNano);
+			return window.costNano;
+		}
+
+		/**
+		 * One twinned field of a window, restricted to the chosen tariff window.
+		 *
+		 * Works for counts and for cost components alike — every field the fold
+		 * twins answers the same way, and an untwinned field falls back to itself.
+		 *
+		 * @param window - a summed window.
+		 * @param field - the untwinned field name.
+		 * @param basis - "all", "peak" or "offpeak".
+		 * @returns the value under that basis.
+		 */
+		function basisPart(window, field, basis) {
+			const total = window[field] ?? 0;
+			const twin = window[`peak${field.charAt(0).toUpperCase()}${field.slice(1)}`] ?? 0;
+			if (basis === "peak") return twin;
+			if (basis === "offpeak") return Math.max(0, total - twin);
+			return total;
+		}
+
+		/**
+		 * The basis to open on: whichever window has more requests to look at.
+		 *
+		 * Read off the data rather than fixed, because the principle is identical on
+		 * either side and the only real question is which one has the sample.
+		 *
+		 * @param days - the merged calendar.
+		 * @param period - the window length in days.
+		 * @returns "peak" or "offpeak".
+		 */
+		function defaultBasis(days, period) {
+			const now = reportWindow(days, 0, period);
+			const peak = now.peakRequests ?? 0;
+			return peak > Math.max(0, now.requests - peak) ? "peak" : "offpeak";
 		}
 
 		/**
@@ -1768,7 +1876,7 @@ window.__ModuleLoader__.load({
 		 * @param t - locale seat.
 		 * @returns the chart, or null when there is not enough to draw.
 		 */
-		function costChart(days, period, t) {
+		function costChart(days, period, basis, t) {
 			const today = new Date();
 			today.setHours(0, 0, 0, 0);
 			const dates = [];
@@ -1790,7 +1898,7 @@ window.__ModuleLoader__.load({
 			if (observed.length < 2) return null;
 			const drawn = [];
 			for (const series of TREND_SERIES) {
-				const values = observed.map((key) => series.value(days[key]));
+				const values = observed.map((key) => series.value(days[key], basis));
 				const known = values.filter((value) => value !== undefined && Number.isFinite(value));
 				if (known.length < 2) continue;
 				const low = Math.min(...known);
@@ -1803,9 +1911,7 @@ window.__ModuleLoader__.load({
 			const pad = 6;
 			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, observed.length - 1);
 			const atY = (entry, value) => height - pad - ((value - entry.low) / entry.spread) * (height - pad * 2);
-			const windowCost = observed.reduce((sum, key) => sum + days[key].costNano, 0);
-			const windowPeak = observed.reduce((sum, key) => sum + days[key].peakCostNano, 0);
-			const peakShare = windowCost === 0 ? 0 : Math.round((windowPeak / windowCost) * 100);
+			const sampled = observed.reduce((sum, key) => sum + basisPart(days[key], "requests", basis), 0);
 			return h(
 				"div",
 				{ className: "dshstats-chart", title: t("report.trendNote") },
@@ -1813,7 +1919,11 @@ window.__ModuleLoader__.load({
 					"div",
 					{ className: "dshstats-chartHead" },
 					t("report.trend", { days: period, active: observed.length }),
-					h("span", { className: "dshstats-reportDelta" }, t("report.trendPeak", { peak: peakShare }))
+					h(
+						"span",
+						{ className: "dshstats-reportDelta" },
+						t("report.scope", { label: t(BASIS_LABELS[basis]), count: countText(sampled, t) })
+					)
 				),
 				h(
 					"svg",
@@ -2056,6 +2166,9 @@ window.__ModuleLoader__.load({
 			// composer where nobody looked for it.
 			const [view, setView] = react.useState("advice");
 			const [period, setPeriod] = react.useState(REPORT_DAYS);
+			// null until the user picks: the default is derived from the report, because
+			// "whichever window has more requests" cannot be known before it loads.
+			const [basis, setBasis] = react.useState(null);
 			const report = useReport();
 			// `useInput` is a selector hook, exactly like `useChat` and
 			// `useProjection`; two primitive reads keep it reference-stable.
@@ -2230,6 +2343,7 @@ window.__ModuleLoader__.load({
 					label
 				);
 			const bill = report !== undefined && report.ok === true ? report.days : undefined;
+			const activeBasis = basis ?? (bill === undefined ? "all" : defaultBasis(bill, period));
 			return h(
 				"span",
 				{ className: "dshstats-anchor" },
@@ -2271,8 +2385,8 @@ window.__ModuleLoader__.load({
 									bill === undefined
 										? h("p", { className: "dshstats-note" }, t("report.loading"))
 										: [
-												costChart(bill, period, t) ?? h("p", { className: "dshstats-note" }, t("report.trendFew")),
-												reportBody(report, period, setPeriod, t),
+												costChart(bill, period, activeBasis, t) ?? h("p", { className: "dshstats-note" }, t("report.trendFew")),
+												reportBody(report, period, setPeriod, activeBasis, setBasis, t),
 												h("p", { key: "note", className: "dshstats-note" }, t("report.note"))
 											]
 								)
