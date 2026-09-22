@@ -161,6 +161,22 @@ for (const [code, segment] of adviceCodes) {
   assert.deepEqual([...used].sort(), [...declared].sort(), `every placeholder ${code} uses is one adviceParams supplies, and vice versa`);
 }
 
+// The bill answers "is my work getting cheaper" with denominators that are work.
+// A step count is the agent's own process (merging calls into one script
+// legitimately raises it) and a turn count is the user's habit (a hello and a
+// full day's work are both one), so neither is a work measure and both were cut
+// on the author's call. A drift back to four readings fails here, not in his
+// browser.
+const seriesStart = client.indexOf("const TREND_SERIES = [");
+assert.ok(seriesStart > 0, "the trend series table is declared");
+const seriesKeys = [...client.slice(seriesStart, client.indexOf("];", seriesStart)).matchAll(/key: "(\w+)"/g)].map((match) => match[1]);
+assert.deepEqual(seriesKeys, ["perEdit", "perAnswer"], "the trend draws exactly the two delivered-side denominators");
+
+const rowsStart = client.indexOf("items: [", client.indexOf("function reportRows("));
+assert.ok(rowsStart > 0, "reportRows builds its rows");
+const rowKeys = [...client.slice(rowsStart, client.indexOf("]", rowsStart)).matchAll(/key: "(\w+)"/g)].map((match) => match[1]);
+assert.deepEqual(rowKeys, ["perEdit", "perOutput", "hit", "split", "compaction", "peak"], "the two denominators, then the readings");
+
 process.stdout.write(`check: locales OK (${String(zh.size)} keys, ${String(asked.size)} requested)\n`);
 NODE
 
