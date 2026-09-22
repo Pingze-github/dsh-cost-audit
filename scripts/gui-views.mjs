@@ -73,6 +73,18 @@ const EXPRESSION = `new Promise((resolve) => {
     out.switches = [...document.querySelectorAll(".dshstats-switchButton")].map(
       (n) => n.innerText + (n.getAttribute("aria-selected") === "true" ? "*" : "")
     );
+    const fine = pick("细粒度") ?? pick("Fine-grained");
+    if (!fine) { out.fine = "no-switch"; resolve(JSON.stringify(out)); return; }
+    fine.click();
+    // The fine view folds every session again, so it waits for its own chart.
+    out.fineWaited = await waitFor(() => document.querySelector(".dshstats-chart"), 25000);
+    out.fine = Boolean(document.querySelector(".dshstats-chart"));
+    out.fineSeries = document.querySelectorAll(".dshstats-series path").length;
+    out.fineMarkers = document.querySelectorAll(".dshstats-marker").length;
+    out.fineRows = document.querySelectorAll(".dshstats-markerRow").length;
+    out.fineLegend = [...document.querySelectorAll(".dshstats-legendItem")].map((n) => n.innerText.replace(/\\n/g, " "));
+    out.fineHead = (document.querySelector(".dshstats-chartHead")?.innerText ?? "").replace(/\\n/g, " | ");
+    out.fineNote = document.querySelector(".dshstats-note")?.innerText ?? "";
     resolve(JSON.stringify(out));
   })();
 })`;
@@ -125,6 +137,18 @@ if (view.bill === true) {
 	process.stdout.write(`gui-views: switches ${JSON.stringify(view.switches)} (* = selected)\n`);
 } else {
 	process.stdout.write(`gui-views: UNVERIFIED — the bill view did not open (${String(view.bill)})\n`);
+}
+if (view.fine === true) {
+	if ((view.fineSeries ?? 0) < 1) {
+		process.stdout.write("gui-views: FAIL the fine view rendered a chart with no series\n");
+		process.exit(1);
+	}
+	process.stdout.write(`gui-views: fine ${String(view.fineSeries)} series · ${String(view.fineMarkers)} markers · ${String(view.fineRows)} listed · ${view.fineHead}\n`);
+	process.stdout.write(`gui-views: fine legend ${JSON.stringify(view.fineLegend)}\n`);
+} else if (view.fine === "no-switch") {
+	process.stdout.write("gui-views: UNVERIFIED — the fine switch was not on the card\n");
+} else {
+	process.stdout.write(`gui-views: UNVERIFIED — the fine view did not open (${String(view.fine)})\n`);
 }
 if (errors.length > 0) {
 	process.stdout.write(`gui-views: note — ${String(errors.length)} console error(s) from other code: ${errors[0].split("\n")[0].slice(0, 60)}\n`);

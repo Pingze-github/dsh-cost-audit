@@ -1815,7 +1815,7 @@ function zeroFineBucket(t) {
     peakCostNano: 0,
     spawns: 0,
     // One band per edge, plus the open-ended one above the last edge.
-    bands: Array.from({ length: CONTEXT_BANDS.length + 1 }, () => ({ calls: 0, promptTokens: 0, cacheReadTokens: 0, outputTokens: 0, costNano: 0 })),
+    bands: Array.from({ length: CONTEXT_BANDS.length + 1 }, () => ({ calls: 0, promptTokens: 0, cacheReadTokens: 0, uncachedInputTokens: 0, outputTokens: 0, costNano: 0 })),
   };
 }
 
@@ -1941,6 +1941,7 @@ async function foldFine(ctx, pricing, options) {
           band.calls += 1;
           band.promptTokens += prompt;
           band.cacheReadTokens += priced.cacheReadTokens;
+          band.uncachedInputTokens += priced.uncachedInputTokens;
           band.outputTokens += priced.outputTokens;
           band.costNano += priced.costNano;
           if (!announced) {

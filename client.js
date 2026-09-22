@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
 		const BALANCE_PATH = "/api/dsh-cost-audit.balance";
 		/** Account-wide daily totals, merged host-side across every session. */
 		const REPORT_PATH = "/api/dsh-cost-audit.report";
+		const FINE_PATH = "/api/dsh-cost-audit.fine";
 		/** The default report window, and every window the panel can be read over. */
 		const REPORT_DAYS = 7;
 		const REPORT_PERIODS = [1, 7, 30];
@@ -173,6 +174,37 @@ window.__ModuleLoader__.load({
 			"report.peak": "高峰占比",
 			"report.peakDetail": "高峰是工作日 9-12 点与 14-18 点，单价翻倍 —— 这里只报数字，不做建议",
 			"report.note": "按列表价估算；搜索与标题两个调用测不到用量，所以是下界；显示变化，不证明因果。",
+			"fine.entry": "细粒度",
+			"fine.window2h": "2 小时",
+			"fine.window24h": "24 小时",
+			"fine.window7d": "7 天",
+			"fine.measureCost": "¥ / 次",
+			"fine.measureHit": "命中 tok / 次",
+			"fine.measureMiss": "冷输入 tok / 次",
+			"fine.measureOut": "输出 tok / 次",
+			"fine.bandAll": "全部档位",
+			"fine.band0": "<100K",
+			"fine.band1": "100–200K",
+			"fine.band2": "200–350K",
+			"fine.band3": "≥350K",
+			"fine.concAll": "全部并发",
+			"fine.concAlone": "只有本会话",
+			"fine.concShared": "有并行",
+			"fine.head": "每调用均值 · {measure} · {buckets} 个桶",
+			"fine.scope": "{window} · {sessions} 个会话",
+			"fine.perCall": "每次调用自己的均值",
+			"fine.loading": "正在折日志…",
+			"fine.unavailable": "细粒度序列读不到（宿主路由没应答）",
+			"fine.few": "这个窗口里不足 2 个有调用的桶 —— 换个窗口或放宽筛选",
+			"fine.failed": "{count} 个会话没折成功，桶可能不全",
+			"fine.markerEffort": "思考档位 {from} → {to}",
+			"fine.markerModel": "模型 {from} → {to}",
+			"fine.markerSpawn": "起子 agent：{name}",
+			"fine.markerCommand": "命令 /{name}",
+			"fine.markerCompaction": "压缩摘要",
+			"fine.markerSetting": "设置 {setting} → {value}",
+			"fine.markerSession": "新会话：{model} · 思考 {effort}",
+			"fine.note": "每个点是那次调用自己的均值，不是日总额；只有同一档位内的比较才说明策略优劣。标记全部由日志推出 —— 会话外改配置不会留痕。",
 			"advice.pill": "{count} 条建议",
 			"advice.pillWithObserving": "{count} 条待处理 · {observing} 条观察中",
 			"advice.pillObservingOnly": "{observing} 条观察中",
@@ -335,6 +367,37 @@ window.__ModuleLoader__.load({
 			"report.peak": "Peak-hour share",
 			"report.peakDetail": "Peak is Mon-Fri 09-12 and 14-18, at double the price — a figure here, not advice",
 			"report.note": "List prices; the search and title calls log no usage, so this is a lower bound; it shows movement, not causation.",
+			"fine.entry": "Fine-grained",
+			"fine.window2h": "2 hours",
+			"fine.window24h": "24 hours",
+			"fine.window7d": "7 days",
+			"fine.measureCost": "CNY / call",
+			"fine.measureHit": "Hit tok / call",
+			"fine.measureMiss": "Cold in tok / call",
+			"fine.measureOut": "Out tok / call",
+			"fine.bandAll": "All sizes",
+			"fine.band0": "<100K",
+			"fine.band1": "100–200K",
+			"fine.band2": "200–350K",
+			"fine.band3": "≥350K",
+			"fine.concAll": "Any concurrency",
+			"fine.concAlone": "This session only",
+			"fine.concShared": "With others",
+			"fine.head": "Per-call mean · {measure} · {buckets} buckets",
+			"fine.scope": "{window} · {sessions} sessions",
+			"fine.perCall": "each call's own mean",
+			"fine.loading": "Folding the logs…",
+			"fine.unavailable": "The fine series is unavailable (the host route did not answer)",
+			"fine.few": "Fewer than 2 buckets in this window hold a call — widen the window or the filters",
+			"fine.failed": "{count} session(s) could not be folded, so the buckets may be incomplete",
+			"fine.markerEffort": "Reasoning effort {from} → {to}",
+			"fine.markerModel": "Model {from} → {to}",
+			"fine.markerSpawn": "Subagent started: {name}",
+			"fine.markerCommand": "Command /{name}",
+			"fine.markerCompaction": "Context summarised",
+			"fine.markerSetting": "Setting {setting} → {value}",
+			"fine.markerSession": "New session: {model} · effort {effort}",
+			"fine.note": "Each point is that call's own mean, not a daily total; only a comparison inside one band says anything about a strategy. Every marker comes from the log — a setting changed outside a session leaves no trace.",
 			"advice.pill": "{count} tips",
 			"advice.pillWithObserving": "{count} to do · {observing} observing",
 			"advice.pillObservingOnly": "{observing} observing",
@@ -498,6 +561,11 @@ window.__ModuleLoader__.load({
 			".dshstats-chart svg{display:block;width:100%;height:46px;margin:4px 0 6px}",
 			".dshstats-series{stroke:var(--dsh-series);fill:var(--dsh-series)}",
 			".dshstats-dot{stroke:none}",
+			".dshstats-marker{stroke:var(--dsw-alias-state-warn-primary);stroke-width:1;stroke-dasharray:2 2}",
+			".dshstats-markers{margin:2px 0 8px;color:var(--dsw-alias-label-caption)}",
+			".dshstats-markerRow{display:flex;gap:6px}",
+			".dshstats-markerTime{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary)}",
+			".dshstats-markerText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 			".dshstats-ink-0{--dsh-series:var(--dsw-alias-brand-primary)}",
 			".dshstats-ink-1{--dsh-series:var(--dsw-alias-state-success-primary)}",
 			".dshstats-ink-2{--dsh-series:var(--dsw-alias-state-business-primary)}",
@@ -2001,6 +2069,290 @@ window.__ModuleLoader__.load({
 			return report;
 		}
 
+		/**
+		 * The fine view's windows. Each one fixes its own bucket size: asking for a
+		 * span and a resolution separately is two switches for one choice.
+		 */
+		const FINE_WINDOWS = Object.freeze([
+			{ key: "2h", label: "fine.window2h", spanMs: 7200000, bucketMs: 60000 },
+			{ key: "24h", label: "fine.window24h", spanMs: 86400000, bucketMs: 300000 },
+			{ key: "7d", label: "fine.window7d", spanMs: 604800000, bucketMs: 3600000 }
+		]);
+
+		/** What the one line can measure. One at a time: two units on one axis lie. */
+		const FINE_MEASURES = Object.freeze([
+			{ key: "cost", label: "fine.measureCost" },
+			{ key: "hit", label: "fine.measureHit" },
+			{ key: "miss", label: "fine.measureMiss" },
+			{ key: "out", label: "fine.measureOut" }
+		]);
+
+		/** The prompt-size bands, in the host's own order; the last one is open-ended. */
+		const FINE_BANDS = Object.freeze([
+			{ key: "all", label: "fine.bandAll" },
+			{ key: "0", label: "fine.band0" },
+			{ key: "1", label: "fine.band1" },
+			{ key: "2", label: "fine.band2" },
+			{ key: "3", label: "fine.band3" }
+		]);
+
+		/** How many sessions ran beside this one inside the same bucket. */
+		const FINE_CONCURRENCY = Object.freeze([
+			{ key: "all", label: "fine.concAll" },
+			{ key: "alone", label: "fine.concAlone" },
+			{ key: "shared", label: "fine.concShared" }
+		]);
+
+		/** One fine read per window per minute; the host folds every session for it. */
+		const fineCache = new Map();
+
+		/** Read the fine series for one span, or a reason it is unavailable. Never rejects. */
+		async function readFine(span) {
+			const now = Date.now();
+			const hit = fineCache.get(span.key);
+			if (hit !== undefined && now - hit.at < REPORT_MIN_INTERVAL_MS) return hit.value;
+			try {
+				const response = await fetch(FINE_PATH, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ bucketMs: span.bucketMs, since: now - span.spanMs, until: now })
+				});
+				if (!response.ok) return { ok: false, reason: `http-${String(response.status)}` };
+				const parsed = await response.json();
+				fineCache.set(span.key, { at: now, value: parsed });
+				return parsed;
+			} catch {
+				return { ok: false, reason: "transport" };
+			}
+		}
+
+		/**
+		 * The fine series for the open span. `active` matters: the panel is mounted
+		 * all the time, and folding every session for a view nobody opened is not
+		 * free.
+		 */
+		function useFine(span, active) {
+			const [series, setSeries] = react.useState(undefined);
+			react.useEffect(() => {
+				if (!active) return undefined;
+				let live = true;
+				readFine(span).then((result) => {
+					if (live) setSeries(result);
+				});
+				return () => {
+					live = false;
+				};
+			}, [span, active]);
+			return series;
+		}
+
+		/**
+		 * One measure's per-call mean in one bucket, or undefined when the bucket (or
+		 * the band inside it) held no call at all.
+		 *
+		 * Per call, never per bucket: buckets hold different amounts of work, so a
+		 * total would rise with volume and say nothing about the strategy.
+		 */
+		function fineMean(bucket, band, measure) {
+			const scope = band === "all" ? bucket : bucket.bands[Number(band)];
+			if (scope === undefined || scope.calls === 0) return undefined;
+			const total =
+				measure === "cost" ? scope.costNano
+					: measure === "hit" ? scope.cacheReadTokens
+						: measure === "miss" ? scope.uncachedInputTokens
+							: scope.outputTokens;
+			return total / scope.calls;
+		}
+
+		/** One per-call value in its own unit. */
+		function fineText(value, measure, t) {
+			if (value === undefined || !Number.isFinite(value)) return "—";
+			return measure === "cost" ? formatCny(value) : formatCompact(value, t);
+		}
+
+		/** Clock time of one instant, dated only when the span makes time ambiguous. */
+		function fineClock(time, withDate) {
+			const date = new Date(time);
+			const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+			return withDate ? `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${clock}` : clock;
+		}
+
+		/** A setting marker's value, with the JSON punctuation taken out of the way. */
+		function fineSetting(value) {
+			return String(value ?? "").replace(/[{"]/g, "").replace(/}/g, "");
+		}
+
+		/**
+		 * One marker's sentence. The host ships values and the client composes the
+		 * words: an English string baked into the log fold could never be translated.
+		 */
+		function markerText(marker, t) {
+			if (marker.kind === "effort") return t("fine.markerEffort", { from: marker.from, to: marker.to });
+			if (marker.kind === "model") return t("fine.markerModel", { from: marker.from, to: marker.to });
+			if (marker.kind === "spawn") return t("fine.markerSpawn", { name: marker.name });
+			if (marker.kind === "command") return t("fine.markerCommand", { name: marker.name });
+			if (marker.kind === "compaction") return t("fine.markerCompaction");
+			if (marker.kind === "setting") return t("fine.markerSetting", { setting: marker.setting, value: fineSetting(marker.value) });
+			return t("fine.markerSession", { model: String(marker.model ?? "?"), effort: String(marker.effort ?? "?") });
+		}
+
+		/**
+		 * One line of per-call means, with the moments the strategy changed drawn on it.
+		 *
+		 * A curve alone cannot answer "did my change help": the same rise shows up
+		 * when the context got heavier, so the markers and the band switch are what
+		 * turn this from a shape into a measurement. The line is stretched to its own
+		 * range — read the direction and the legend's latest value, not the height.
+		 */
+		function fineChart(series, span, measure, band, conc, t) {
+			const buckets = series.buckets.filter((bucket) => {
+				if (conc === "alone") return bucket.sessions === 1;
+				if (conc === "shared") return bucket.sessions > 1;
+				return true;
+			});
+			const points = buckets
+				.map((bucket) => ({ t: bucket.t, value: fineMean(bucket, band, measure) }))
+				.filter((point) => point.value !== undefined && Number.isFinite(point.value));
+			if (points.length < 2) return null;
+			const known = points.map((point) => point.value);
+			const low = Math.min(...known);
+			const high = Math.max(...known);
+			const spread = high - low || high || 1;
+			const width = 260;
+			const height = 46;
+			const pad = 6;
+			const atX = (index) => pad + (index * (width - pad * 2)) / Math.max(1, points.length - 1);
+			const atY = (value) => height - pad - ((value - low) / spread) * (height - pad * 2);
+			// A marker rides the bucket it fell in; one that fell in a bucket holding
+			// no call rides the last drawn bucket before it, so "changed here" is
+			// never dropped from the picture.
+			const marks = [];
+			for (const marker of series.markers) {
+				let index = -1;
+				for (let slot = 0; slot < points.length; slot += 1) {
+					if (points[slot].t <= marker.t) index = slot;
+				}
+				if (index >= 0) marks.push({ marker, index });
+			}
+			let path = "";
+			points.forEach((point, index) => {
+				path += `${index === 0 ? "M" : "L"}${atX(index).toFixed(1)} ${atY(point.value).toFixed(1)} `;
+			});
+			const dotted = span.bucketMs >= 3600000;
+			const recent = marks.slice(-6).reverse();
+			return h(
+				"div",
+				{ className: "dshstats-chart", title: t("fine.note") },
+				h(
+					"div",
+					{ className: "dshstats-chartHead" },
+					t("fine.head", { measure: t(FINE_MEASURES.find((entry) => entry.key === measure)?.label ?? "fine.measureCost"), buckets: points.length }),
+					h("span", { className: "dshstats-reportDelta" }, t("fine.scope", { window: t(span.label), sessions: series.sessions }))
+				),
+				h(
+					"svg",
+					{ viewBox: `0 0 ${String(width)} ${String(height)}`, preserveAspectRatio: "none", "aria-hidden": true },
+					marks.map((entry) =>
+						h(
+							"line",
+							{
+								key: `mark:${String(entry.marker.t)}:${String(entry.marker.kind)}`,
+								className: "dshstats-marker",
+								x1: atX(entry.index).toFixed(1),
+								x2: atX(entry.index).toFixed(1),
+								y1: 0,
+								y2: height
+							},
+							h("title", null, `${fineClock(entry.marker.t, dotted)} · ${markerText(entry.marker, t)}`)
+						)
+					),
+					h(
+						"g",
+						{ className: "dshstats-series dshstats-ink-0" },
+						h("path", {
+							d: path.trim(),
+							fill: "none",
+							strokeWidth: 1.5,
+							vectorEffect: "non-scaling-stroke",
+							strokeLinejoin: "round",
+							strokeLinecap: "round"
+						}),
+						// Inside the group: the dot's fill is the series colour, and the
+						// group is where that colour is set.
+						points.map((point, index) =>
+							h("circle", { key: `dot:${String(point.t)}`, className: "dshstats-dot", cx: atX(index).toFixed(1), cy: atY(point.value).toFixed(1), r: 1.8 })
+						)
+					)
+				),
+				h(
+					"div",
+					{ className: "dshstats-legend" },
+					h(
+						"span",
+						{ className: "dshstats-legendItem" },
+						h("span", { className: "dshstats-swatch dshstats-ink-0" }),
+						t(FINE_BANDS.find((entry) => entry.key === band)?.label ?? "fine.bandAll"),
+						h("span", { className: "dshstats-legendValue" }, fineText(known[known.length - 1], measure, t))
+					),
+					h("span", { className: "dshstats-legendItem" }, t("fine.perCall"))
+				),
+				recent.length === 0
+					? null
+					: h(
+							"div",
+							{ className: "dshstats-markers" },
+							recent.map((entry) =>
+								h(
+									"div",
+									{ key: `row:${String(entry.marker.t)}:${String(entry.marker.kind)}`, className: "dshstats-markerRow" },
+									h("span", { className: "dshstats-markerTime" }, fineClock(entry.marker.t, dotted)),
+									h("span", { className: "dshstats-markerText" }, markerText(entry.marker, t))
+								)
+							)
+						)
+			);
+		}
+
+		/**
+		 * The fine view: what one read the log at the resolution the interventions
+		 * happened at, and the two switches that make the reading mean something —
+		 * which prompt band, and whether anything else was running.
+		 */
+		function fineBody(series, span, setSpan, measure, setMeasure, band, setBand, conc, setConc, t) {
+			const row = (key, entries, active, onPick) =>
+				h(
+					"div",
+					{ key, className: "dshstats-switch", role: "tablist" },
+					entries.map((entry) =>
+						h(
+							"button",
+							{
+								key: entry.key,
+								type: "button",
+								role: "tab",
+								"aria-selected": entry.key === active,
+								className: `dshstats-switchButton${entry.key === active ? " dshstats-switchOn" : ""}`,
+								onClick: () => onPick(entry.key)
+							},
+							t(entry.label)
+						)
+					)
+				);
+			const switches = [
+				row("fineSpan", FINE_WINDOWS, span.key, (key) => setSpan(FINE_WINDOWS.find((entry) => entry.key === key) ?? FINE_WINDOWS[1])),
+				row("fineMeasure", FINE_MEASURES, measure, setMeasure),
+				row("fineBand", FINE_BANDS, band, setBand),
+				row("fineConc", FINE_CONCURRENCY, conc, setConc)
+			];
+			if (series === undefined) return switches.concat([h("p", { key: "loading", className: "dshstats-note" }, t("fine.loading"))]);
+			if (series.ok !== true) return switches.concat([h("p", { key: "down", className: "dshstats-note" }, t("fine.unavailable"))]);
+			return switches.concat([
+				fineChart(series, span, measure, band, conc, t) ?? h("p", { key: "few", className: "dshstats-note" }, t("fine.few")),
+				series.failed > 0 ? h("p", { key: "failed", className: "dshstats-note" }, t("fine.failed", { count: series.failed })) : null,
+				h("p", { key: "note", className: "dshstats-note" }, t("fine.note"))
+			]);
+		}
+
 		/** The live account read, lifted so both pills (and the panel) share one fetch. */
 		function useBalance() {
 			const [balance, setBalance] = react.useState(undefined);
@@ -2147,7 +2499,15 @@ window.__ModuleLoader__.load({
 			// null until the user picks: the default is derived from the report, because
 			// "whichever window has more requests" cannot be known before it loads.
 			const [basis, setBasis] = react.useState(null);
+			// The fine view: one switch picks the span, and the span fixes its own
+			// bucket size. The band and concurrency switches are the whole point of
+			// it — they are the only two cost drivers a user can hold down.
+			const [fineSpan, setFineSpan] = react.useState(FINE_WINDOWS[1]);
+			const [fineMeasure, setFineMeasure] = react.useState("cost");
+			const [fineBand, setFineBand] = react.useState("all");
+			const [fineConc, setFineConc] = react.useState("all");
 			const report = useReport();
+			const fine = useFine(fineSpan, view === "fine");
 			// `useInput` is a selector hook, exactly like `useChat` and
 			// `useProjection`; two primitive reads keep it reference-stable.
 			const draft = useInput((state) => state.draft);
@@ -2322,6 +2682,7 @@ window.__ModuleLoader__.load({
 				);
 			const bill = report !== undefined && report.ok === true ? report.days : undefined;
 			const activeBasis = basis ?? (bill === undefined ? "all" : defaultBasis(bill, period));
+			const panelTitle = view === "bill" ? t("report.entry") : view === "fine" ? t("fine.entry") : t("advice.title");
 			return h(
 				"span",
 				{ className: "dshstats-anchor" },
@@ -2346,29 +2707,32 @@ window.__ModuleLoader__.load({
 					panelRef: seat.panelRef,
 					pos: seat.pos,
 					icon: h(ADVICE_ICON, null),
-					title: view === "bill" ? t("report.entry") : t("advice.title"),
+					title: panelTitle,
 					value: adviceCountLabel(open.length, adopted.length, t),
-					ariaLabel: view === "bill" ? t("report.entry") : t("advice.title"),
+					ariaLabel: panelTitle,
 					children: [
 						h(
 							"div",
 							{ key: "switch", className: "dshstats-switch" },
 							switchButton("advice", t("advice.title")),
-							switchButton("bill", t("report.entry"))
+							switchButton("bill", t("report.entry")),
+							switchButton("fine", t("fine.entry"))
 						),
-						view === "bill"
-							? h(
-									"div",
-									{ key: "bill" },
-									bill === undefined
-										? h("p", { className: "dshstats-note" }, t("report.loading"))
-										: [
-												costChart(bill, period, activeBasis, t) ?? h("p", { className: "dshstats-note" }, t("report.trendFew")),
-												reportBody(report, period, setPeriod, activeBasis, setBasis, t),
-												h("p", { key: "note", className: "dshstats-note" }, t("report.note"))
-											]
-								)
-							: h("div", { key: "advice" }, [
+						view === "fine"
+							? h("div", { key: "fine" }, fineBody(fine, fineSpan, setFineSpan, fineMeasure, setFineMeasure, fineBand, setFineBand, fineConc, setFineConc, t))
+							: view === "bill"
+								? h(
+										"div",
+										{ key: "bill" },
+										bill === undefined
+											? h("p", { className: "dshstats-note" }, t("report.loading"))
+											: [
+													costChart(bill, period, activeBasis, t) ?? h("p", { className: "dshstats-note" }, t("report.trendFew")),
+													reportBody(report, period, setPeriod, activeBasis, setBasis, t),
+													h("p", { key: "note", className: "dshstats-note" }, t("report.note"))
+												]
+									)
+								: h("div", { key: "advice" }, [
 									h("p", { key: "moneyNote", className: "dshstats-note" }, t("adviceMoneyNote")),
 									...items
 								])

@@ -230,7 +230,7 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or
   a restart is needed (and restarting `dsh web` kills the session hosting it).
 
-## Fine-grained series (host half, shipped; panel view follows)
+## Fine-grained series (shipped: host route + the card's third view)
 
 - **The fine series is folded at query time, from the events, not persisted.**
   `POST /api/dsh-cost-audit.fine` with `{bucketMs, since, until, sessionId?}`
@@ -247,6 +247,13 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   ran at once is per bucket (`sessions`), which is the real subagent-concurrency
   reading. Task type is not a variable anyone can hold down — do not promise a
   "before vs after" comparison across task types, only inside a band.
+- **A band list needs one more slot than it has edges.** `CONTEXT_BANDS` is
+  three edges and four bands, so `bands` was one short and the open-ended band's
+  write threw — inside the per-session `catch`, which silently truncated that
+  session and left a half-filled bucket behind. `bands` is now
+  `Array.from({length: edges + 1})`, the cold-input side rides every band (so all
+  four measures work per band), and the fold counts `failed` instead of pretending
+  a skipped session never existed.
 - **Markers are derived, never authored.** `request/header` config changes
   (`model`, `reasoningEffort`), `tool/call` named `subagent` / `subagent_fork`,
   `command/run`, `compaction/summary`, and `permission/preset` / `sandbox/mode` /
@@ -255,6 +262,11 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   session (editing a preset file, `settings.yaml`) leaves no event and therefore
   no marker — it shows up only as the next session starting at a different
   `reasoningEffort`.
+- **A label held in a table is invisible to the `t()` scan.** `check.sh` collects
+  the keys the client *asks* for by matching `t("...")`, so
+  `{ key: "24h", label: "fine.window24h" }` was never checked and a typo would
+  have rendered the raw key. The gate now also scans every quoted string whose
+  first segment is a locale segment and requires it in both dictionaries.
 
 ## Verified against
 

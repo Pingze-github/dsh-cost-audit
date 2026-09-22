@@ -345,6 +345,7 @@ assert.equal(new Date(WEEKEND).getUTCDay(), 6, "WEEKEND must be a Saturday");
 	assert.equal(bucket.bands[1].calls, 1, "a 101K prompt files under its own band");
 	assert.equal(bucket.bands[0].calls, 0, "and under no other");
 	assert.equal(bucket.bands[1].promptTokens, 101000, "the band carries the same prompt total");
+	assert.equal(bucket.bands[1].uncachedInputTokens, 1000, "and the cold-input side of it");
 	assert.equal(bucket.costNano, 1000 * 2 * 1000 + 100000 * 0.04 * 1000 + 100 * 8 * 1000, "the call is priced at the peak rates of its own instant");
 	assert.equal(bucket.peakCostNano, bucket.costNano, "a peak call fills the peak half too");
 	assert.equal(bucket.spawns, 1, "a subagent spawn is counted in its bucket");

@@ -45,6 +45,16 @@ assert.match(client, new RegExp(`id:\\s*"${pkg.name}"`), "client bundle id match
 assert.match(client, /conversation\.chat\.assistant-actions/, "registers the per-turn slot");
 assert.match(client, /conversation\.composer\.dock/, "registers the session slot");
 
+// A route named in one half and renamed in the other answers 404 while the gate
+// stays green, so the paths are compared here instead of repeated.
+const index = readFileSync("index.js", "utf8");
+for (const name of ["BALANCE_PATH", "REPORT_PATH", "FINE_PATH"]) {
+  const host = index.match(new RegExp(`const ${name} = "([^"]+)"`));
+  assert.ok(host !== null, `the host declares ${name}`);
+  assert.ok(client.includes(`const ${name} = "${host[1]}"`), `the client reads ${name} from the same path`);
+}
+assert.match(client, /dshstats-marker/, "the fine chart marks the moments the strategy changed");
+
 process.stdout.write("check: bundle wiring OK\n");
 
 // Every label the client asks for must exist in BOTH shipped locales, and the
@@ -58,6 +68,12 @@ const dictKeys = (name) => {
   return new Set([...body.matchAll(/"([a-zA-Z][\w.]*)":/g)].map((match) => match[1]));
 };
 const zh = dictKeys("DICT_ZH");
+// A label held in a table (`{ key: "x", label: "fine.window2h" }`) is never a
+// `t("...")` call, so the scan below cannot see it and a typo would render the
+// raw key at runtime. Every quoted string whose segment is a locale segment must
+// therefore exist in both dictionaries.
+const quoted = (source) => new Set([...source.matchAll(/"([a-z][a-zA-Z0-9]*\.[a-zA-Z][\w.]*)"/g)].map((match) => match[1]));
+
 const en = dictKeys("DICT_EN");
 assert.ok(zh.size > 20, `the zh dictionary is populated (${String(zh.size)} keys)`);
 assert.deepEqual([...zh].sort(), [...en].sort(), "zh and en carry the same keys");
@@ -176,6 +192,16 @@ const rowsStart = client.indexOf("items: [", client.indexOf("function reportRows
 assert.ok(rowsStart > 0, "reportRows builds its rows");
 const rowKeys = [...client.slice(rowsStart, client.indexOf("]", rowsStart)).matchAll(/key: "(\w+)"/g)].map((match) => match[1]);
 assert.deepEqual(rowKeys, ["perEdit", "perOutput", "hit", "split", "compaction", "peak"], "the two denominators, then the readings");
+
+{
+  const segments = new Set([...zh].map((key) => key.slice(0, key.indexOf("."))));
+  for (const key of quoted(client)) {
+    if (!segments.has(key.slice(0, key.indexOf(".")))) continue;
+    for (const [name, dict] of [["zh", zh], ["en", en]]) {
+      assert.ok(dict.has(key), `${name} locale has ${key} — a label table is invisible to the t() scan`);
+    }
+  }
+}
 
 process.stdout.write(`check: locales OK (${String(zh.size)} keys, ${String(asked.size)} requested)\n`);
 NODE
