@@ -1067,4 +1067,71 @@ function toolCalls(count, name, args, ms, time) {
 	assert.equal(sink.metrics.productiveCalls, 0, "and counts nothing");
 }
 
+{
+	// Thinking is billed at the output rate, so the bucket has to carry it —
+	// otherwise "output" quietly means "answer + thinking" and a rise in thinking
+	// is invisible behind a denominator that grew with it.
+	const usage = { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1000, reasoningTokens: 900 };
+	const { view } = fold([route("deepseek-flash"), settle(1, 1, usage, PEAK)]);
+	assert.equal(view.total.reasoningTokens, 900, "the thinking subset is kept");
+	assert.equal(view.metrics.answerTokens, 100, "and the answer is what is left of the output");
+	assert.equal(view.total.outputCostNano, 1000 * 8 * 1000, "the output line's own cost is kept, so thinking can be priced");
+}
+
+{
+	// The effort tip, and the shape it must stay quiet about.
+	const header = (effort) => ({
+		type: "request/header",
+		seq: 0,
+		time: PEAK,
+		data: { header: { config: { provider: "deepseek-official", model: "deepseek-flash", reasoningEffort: effort } } }
+	});
+	// One turn per settlement, so "per turn" means what it says.
+	const session = (usage, writes) => {
+		const events = [route("deepseek-flash"), header("high")];
+		for (let index = 0; index < 25; index += 1) {
+			const turn = index + 1;
+			events.push({ type: "step/start", seq: index * 4 + 1, time: PEAK, data: { turn, step: 1 } });
+			events.push(settle(turn, 1, usage, PEAK));
+			if (writes) {
+				events.push({
+					type: "tool/call",
+					seq: index * 4 + 3,
+					time: PEAK,
+					data: { turn, step: 1, callId: `c${String(index)}`, name: "write", arguments: JSON.stringify({ file_path: `/tmp/f${String(index)}.js`, content: "x" }) }
+				});
+				events.push({
+					type: "tool/result",
+					seq: index * 4 + 4,
+					time: PEAK,
+					data: { turn, step: 1, message: { source: { callId: `c${String(index)}` } } }
+				});
+			}
+			events.push({ type: "step/end", seq: index * 4 + 5, time: PEAK, data: { turn, step: 1 } });
+		}
+		return events;
+	};
+
+	// Heavy thinking, short answers, nothing delivered: max left on for errands.
+	const tip = fold(session({ inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1000, reasoningTokens: 900 }, false))
+		.view.advice.find((item) => item.code === "reasoning-effort");
+	assert.ok(tip !== undefined, "the effort tip fires on short answers with heavy thinking");
+	assert.equal(tip.values.effort, "high", "and names the setting it read off the header");
+	assert.equal(tip.values.percent, 90, "and the thinking share");
+	assert.ok(tip.values.costNano > 0, "and what the thinking cost — the one exactly countable lever");
+	assert.equal(tip.values.answer, 100, "and the average answer size");
+
+	// Same thinking share, but real answers and delivered files: leave it alone.
+	for (const [usage, writes, why] of [
+		[{ inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 4000, reasoningTokens: 3600 }, false, "long answers"],
+		[{ inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1000, reasoningTokens: 900 }, true, "delivered edits"]
+	]) {
+		assert.equal(
+			fold(session(usage, writes)).view.advice.some((item) => item.code === "reasoning-effort"),
+			false,
+			`deep work is left alone: ${why}`
+		);
+	}
+}
+
 process.stdout.write(`check: dsh-cost-audit host half OK (${registrations.length} projection units, ${routes.length} connection routes)\n`);

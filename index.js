@@ -198,9 +198,17 @@ const bucketShape = {
   cacheReadTokens: z.number().int().nonnegative(),
   cacheWriteTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
+  /**
+   * The thinking subset of `outputTokens`. Billed at the output rate, so it is
+   * real money — 57% of all output on this machine — and until this field
+   * existed the panel folded it silently into "output".
+   */
+  reasoningTokens: z.number().int().nonnegative(),
   costNano: z.number().int().nonnegative(),
   /** The cache-read share of `costNano`, kept so the advisor can name it. */
   cacheReadCostNano: z.number().int().nonnegative(),
+  /** What the output line cost, so thinking can be priced without a rate lookup. */
+  outputCostNano: z.number().int().nonnegative(),
   /** Tokens this plugin could price (a known DeepSeek family was routed). */
   pricedTokens: z.number().int().nonnegative(),
   /** Tokens left out of `costNano` because the routed model had no rate here. */
@@ -371,6 +379,13 @@ const signalShape = {
   peakPromptTokens: z.number().int().nonnegative(),
   /** Whether a compaction ran after that measurement, which makes it a stale reading. */
   compactedSinceRequest: z.boolean(),
+  /**
+   * The reasoning effort the harness is actually requesting, read off
+   * `request/header`. The one lever in this plugin whose money can be counted
+   * exactly — thinking is billed at the output rate — so it is worth knowing
+   * rather than guessing. Empty when the log never says.
+   */
+  reasoningEffort: z.string(),
 };
 
 const signalsSchema = z.object(signalShape).strict();
@@ -390,6 +405,7 @@ const ZERO_SIGNALS = Object.freeze({
   lastPromptTokens: 0,
   peakPromptTokens: 0,
   compactedSinceRequest: false,
+  reasoningEffort: "",
 });
 
 /** Tools whose name alone means the session actually produced or shipped something. */
@@ -573,6 +589,7 @@ const dayShape = {
   cacheReadTokens: z.number().int().nonnegative(),
   cacheWriteTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
   turns: z.number().int().nonnegative(),
   steps: z.number().int().nonnegative(),
   toolCalls: z.number().int().nonnegative(),
@@ -648,7 +665,9 @@ const ZERO_BUCKET = Object.freeze({
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
   outputTokens: 0,
+  reasoningTokens: 0,
   costNano: 0,
+  outputCostNano: 0,
   cacheReadCostNano: 0,
   pricedTokens: 0,
   unpricedTokens: 0,
@@ -751,7 +770,15 @@ function priceUsage(usage, family, peak, pricing) {
   const o = output ?? 0;
   const billed = u + c + w + o;
   if (family === null) {
-    return { ...ZERO_BUCKET, uncachedInputTokens: u, cacheReadTokens: c, cacheWriteTokens: w, outputTokens: o, unpricedTokens: billed };
+    return {
+      ...ZERO_BUCKET,
+      uncachedInputTokens: u,
+      cacheReadTokens: c,
+      cacheWriteTokens: w,
+      outputTokens: o,
+      reasoningTokens: Math.min(o, countOf(usage.reasoningTokens) ?? 0),
+      unpricedTokens: billed,
+    };
   }
   const parts = subjectCosts({ uncached: u, cacheRead: c, cacheWrite: w, output: o }, family, peak, pricing);
   const costNano = parts.cacheReadCostNano + parts.uncachedCostNano + parts.outputCostNano;
@@ -760,8 +787,10 @@ function priceUsage(usage, family, peak, pricing) {
     cacheReadTokens: c,
     cacheWriteTokens: w,
     outputTokens: o,
+    reasoningTokens: Math.min(o, countOf(usage.reasoningTokens) ?? 0),
     costNano,
     cacheReadCostNano: parts.cacheReadCostNano,
+    outputCostNano: parts.outputCostNano,
     pricedTokens: billed,
     unpricedTokens: 0,
   };
@@ -778,6 +807,8 @@ function addBuckets(left, right) {
     uncachedInputTokens: left.uncachedInputTokens + right.uncachedInputTokens,
     cacheReadTokens: left.cacheReadTokens + right.cacheReadTokens,
     cacheWriteTokens: left.cacheWriteTokens + right.cacheWriteTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    outputCostNano: left.outputCostNano + right.outputCostNano,
     outputTokens: left.outputTokens + right.outputTokens,
     costNano: left.costNano + right.costNano,
     cacheReadCostNano: left.cacheReadCostNano + right.cacheReadCostNano,
@@ -799,6 +830,8 @@ function subtractBuckets(next, previous) {
     uncachedInputTokens: next.uncachedInputTokens - previous.uncachedInputTokens,
     cacheReadTokens: next.cacheReadTokens - previous.cacheReadTokens,
     cacheWriteTokens: next.cacheWriteTokens - previous.cacheWriteTokens,
+    reasoningTokens: next.reasoningTokens - previous.reasoningTokens,
+    outputCostNano: next.outputCostNano - previous.outputCostNano,
     outputTokens: next.outputTokens - previous.outputTokens,
     costNano: next.costNano - previous.costNano,
     cacheReadCostNano: next.cacheReadCostNano - previous.cacheReadCostNano,
@@ -898,6 +931,7 @@ function foldSettlement(state, event, pricing) {
       cacheReadTokens: delta.cacheReadTokens,
       cacheWriteTokens: delta.cacheWriteTokens,
       outputTokens: delta.outputTokens,
+      reasoningTokens: delta.reasoningTokens,
       requests: 1,
     }),
   };
@@ -1038,6 +1072,7 @@ function foldCompactionSummary(state, event, pricing) {
           cacheReadTokens: bucket.cacheReadTokens,
           cacheWriteTokens: bucket.cacheWriteTokens,
           outputTokens: bucket.outputTokens,
+          reasoningTokens: bucket.reasoningTokens,
           compactions: 1,
         }),
       };
@@ -1077,6 +1112,8 @@ function statsMetrics(state) {
     compactions: state.compaction.count,
     stepsSinceProductive: state.signals.stepsSinceProductive,
     productiveCalls: state.signals.productiveCalls,
+    reasoningTokens: state.total.reasoningTokens,
+    answerTokens: Math.max(0, state.total.outputTokens - state.total.reasoningTokens),
     lastPromptTokens: state.signals.lastPromptTokens,
     peakPromptTokens: state.signals.peakPromptTokens,
     compactedSinceRequest: state.signals.compactedSinceRequest,
@@ -1099,6 +1136,8 @@ const metricsSchema = z
     compactions: z.number().int().nonnegative(),
     stepsSinceProductive: z.number().int().nonnegative(),
     productiveCalls: z.number().int().nonnegative(),
+    reasoningTokens: z.number().int().nonnegative(),
+    answerTokens: z.number().int().nonnegative(),
     lastPromptTokens: z.number().int().nonnegative(),
     peakPromptTokens: z.number().int().nonnegative(),
     compactedSinceRequest: z.boolean(),
@@ -1116,6 +1155,13 @@ const metricsSchema = z
  * @param state - the fold state.
  * @returns the advice list (possibly empty).
  */
+/** Requests needed before an effort downgrade is worth suggesting. */
+const EFFORT_SAMPLE = 20;
+/** Thinking share of output above which the setting is worth questioning. */
+const EFFORT_THINKING_SHARE = 0.4;
+/** Average answer tokens per turn below which the thinking is not paying off. */
+const EFFORT_ANSWER_FLOOR = 400;
+
 function buildAdvice(state) {
   const advice = [];
   const total = state.total;
@@ -1237,6 +1283,42 @@ function buildAdvice(state) {
   // balance about to run out are about being stuck, not about spend, so those
   // lead whatever they cost. Everything else is ranked by the money involved,
   // because a ¥0.10 pattern must not outrank a ¥50 one for sounding worse.
+  // The one lever whose money can be counted exactly: thinking is billed at the
+  // output rate, so `reasoningTokens × output rate` is what the setting costs.
+  //
+  // Deliberately hard to trigger. Deep work deserves the high setting, and a tip
+  // that fires mid-reasoning is noise — a noisy advisor stops being read. This
+  // needs the setting high AND thinking dominating the output AND the answers
+  // short anyway AND little delivered: the shape of "max was left on for a
+  // session of small errands", not the shape of a hard problem. The body says as
+  // much, so the reader can overrule it.
+  const effort = signals.reasoningEffort;
+  const turnCount = Object.keys(state.turns).length;
+  const answerTokens = Math.max(0, total.outputTokens - total.reasoningTokens);
+  const thinkingShare = total.outputTokens === 0 ? 0 : total.reasoningTokens / total.outputTokens;
+  const answerPerTurn = turnCount === 0 ? 0 : answerTokens / turnCount;
+  const editsPerTurn = turnCount === 0 ? 0 : signals.productiveCalls / turnCount;
+  if (
+    (effort === "high" || effort === "max") &&
+    modelCalls >= EFFORT_SAMPLE &&
+    total.reasoningTokens > 0 &&
+    thinkingShare >= EFFORT_THINKING_SHARE &&
+    answerPerTurn < EFFORT_ANSWER_FLOOR &&
+    editsPerTurn < 1
+  ) {
+    advice.push({
+      code: "reasoning-effort",
+      severity: "info",
+      values: {
+        effort,
+        percent: Math.round(thinkingShare * 100),
+        costNano: total.outputTokens === 0 ? 0 : Math.round(total.reasoningTokens * (total.outputCostNano / total.outputTokens)),
+        answer: Math.round(answerPerTurn),
+        calls: modelCalls,
+      },
+    });
+  }
+
   const rank = { high: 0, warn: 1, info: 2 };
   return advice.sort((left, right) => {
     const urgent = Number(right.severity === "high") - Number(left.severity === "high");
@@ -1261,7 +1343,7 @@ function createStatsProjection(pricing) {
   let viewValue;
   return {
     key: PROJECTION_KEY,
-    stateVersion: 7,
+    stateVersion: 8,
     stateSchema,
     init: () => ({
       provider: "",
@@ -1293,7 +1375,16 @@ function createStatsProjection(pricing) {
         const config = event.data?.header?.config;
         const provider = typeof config?.provider === "string" ? config.provider : state.provider;
         const model = typeof config?.model === "string" ? config.model : state.model;
-        if (provider !== state.provider || model !== state.model) next = { ...next, provider, model };
+        // The effort rides the same header, and it is worth keeping: thinking is
+        // billed at the output rate, so this is the one setting in the plugin whose
+        // money can be counted exactly instead of estimated.
+        const effort = typeof config?.reasoningEffort === "string" && config.reasoningEffort !== ""
+          ? config.reasoningEffort
+          : state.signals.reasoningEffort;
+        const signals = effort === state.signals.reasoningEffort ? state.signals : { ...state.signals, reasoningEffort: effort };
+        if (provider !== state.provider || model !== state.model || signals !== state.signals) {
+          next = { ...next, provider, model, signals };
+        }
       } else if (type === "llm/retry-started") {
         const key = `${event.data.turn}:${event.data.step}`;
         next = {

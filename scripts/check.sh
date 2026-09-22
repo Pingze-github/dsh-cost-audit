@@ -76,7 +76,9 @@ const adviceStart = client.indexOf("const ADVICE_KEYS = {");
 assert.ok(adviceStart > 0, "the advice key table is declared");
 const adviceTable = client.slice(adviceStart, client.indexOf("};", adviceStart));
 const adviceCodes = [...adviceTable.matchAll(/"([a-z-]+)":\s*"([a-zA-Z]+)"/g)].map((match) => [match[1], match[2]]);
-assert.equal(adviceCodes.length, 9, "nine advice codes are tabled");
+// Not a fixed number: the count is the table's own, and a hardcoded one here only
+// ever means this line has to be edited whenever a rule is added.
+assert.ok(adviceCodes.length >= 9, `the advice table carries every code (${adviceCodes.length})`);
 for (const [code, segment] of adviceCodes) {
   for (const [name, dict] of [["zh", zh], ["en", en]]) {
     assert.ok(dict.has(`advice.${segment}.title`), `${name} title for ${code}`);

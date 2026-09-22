@@ -59,6 +59,7 @@ window.__ModuleLoader__.load({
 			"cacheReadTokens",
 			"cacheWriteTokens",
 			"outputTokens",
+			"reasoningTokens",
 			"turns",
 			"steps",
 			"toolCalls",
@@ -85,6 +86,8 @@ window.__ModuleLoader__.load({
 			"turn.cacheWrite": "缓存写入",
 			"turn.input": "总输入",
 			"turn.output": "输出",
+			"turn.thinking": "其中思考",
+			"turn.thinkingValue": "思考 {tokens}（占输出 {percent}%）",
 			"turn.cost": "本轮费用",
 			"session.aria": "会话费用 {cost} · 今日 {today} · 账户余额 {balance}（点击查看详情）",
 			"session.title": "会话用量与费用",
@@ -95,6 +98,8 @@ window.__ModuleLoader__.load({
 			"session.cacheWrite": "缓存写入",
 			"session.input": "总输入",
 			"session.output": "输出",
+			"session.thinking": "其中思考",
+			"session.thinkingValue": "思考 {tokens}（占输出 {percent}%）",
 			"session.balance": "账户余额",
 			"balance.total": "总余额",
 			"balance.granted": "赠送余额",
@@ -144,8 +149,8 @@ window.__ModuleLoader__.load({
 			"report.perTurnDetail": "你每发一条消息平均花多少钱 —— 注意回合不是工作量：说一句「你好」和一整个大任务都算一回合。它衡量的是习惯，不是效率",
 			"report.perEdit": "每产出编辑",
 			"report.perEditDetail": "每 write / edit / present 一次多少钱 —— 工作量口径；纯聊天、纯调研的日子没有产出，显示 —",
-			"report.perOutput": "每 1K 输出 token",
-			"report.perOutputDetail": "产出 1000 token 要付多少 —— 输入是输出的很多倍时它就高，缓存和上下文都在这里体现",
+			"report.perOutput": "每 1K 回答 token",
+			"report.perOutputDetail": "产出 1000 token 回答要付多少（不含思考）—— 输入是回答的很多倍时它就高，缓存和上下文都在这里体现",
 			"report.hit": "缓存命中率",
 			"report.hitDetail": "命中的输入按 1/50 计价（0.02 对 1 元/M）—— 掉一个点，钱就上一个台阶",
 			"report.split": "重读 / 冷输入 / 输出",
@@ -166,6 +171,9 @@ window.__ModuleLoader__.load({
 			"advice.dismiss": "忽略这条",
 			"advice.restore": "恢复已忽略的建议",
 			"advice.contextReread.title": "上下文重读占了大头",
+			"advice.reasoningEffort.title": "思考设置可能偏高",
+			"advice.reasoningEffort.body": "当前档位 {effort}，思考占输出的 {percent}%（约 ¥{cost}），但平均每条回答只有 {answer} token —— 这更像零碎任务而不是长程推理。",
+			"advice.reasoningEffort.manual": "手动项：去 agent preset 把 reasoningEffort 降一档（当前 {effort}）。如果你其实在做长程推理，忽略这条。",
 			"advice.contextReread.body": "本次会话 {totalCost} 里有 {cost}（{percent}%）是同一份上下文被重读了 {calls} 次。缩小上下文比少输出更省：开新会话、压缩，或让工具少吐内容。",
 			"advice.fragmentedTools.title": "碎调用偏多",
 			"advice.fragmentedTools.body": "{tool} 调用了 {calls} 次，其中 {fast} 次不到 2 秒。每次的输出都会进入上下文、并在之后每一轮被重读 —— 合并成一个脚本更省。",
@@ -241,6 +249,8 @@ window.__ModuleLoader__.load({
 			"turn.cacheWrite": "Cache write",
 			"turn.input": "Total input",
 			"turn.output": "Output",
+			"turn.thinking": "of which thinking",
+			"turn.thinkingValue": "{tokens} thinking ({percent}% of output)",
 			"turn.cost": "Turn cost",
 			"session.aria": "Session cost {cost} · today {today} · balance {balance} (click for details)",
 			"session.title": "Session usage & cost",
@@ -251,6 +261,8 @@ window.__ModuleLoader__.load({
 			"session.cacheWrite": "Cache write",
 			"session.input": "Total input",
 			"session.output": "Output",
+			"session.thinking": "of which thinking",
+			"session.thinkingValue": "{tokens} thinking ({percent}% of output)",
 			"session.balance": "Account balance",
 			"balance.total": "Total balance",
 			"balance.granted": "Granted",
@@ -300,8 +312,8 @@ window.__ModuleLoader__.load({
 			"report.perTurnDetail": "What one message of yours costs on average — but a turn is not a unit of work: one hello and one full day's task are both a turn. It measures habit, not efficiency",
 			"report.perEdit": "Per edit delivered",
 			"report.perEditDetail": "What one write / edit / present costs — the work denominator; a day of pure chat or research has none and reads —",
-			"report.perOutput": "Per 1K output tokens",
-			"report.perOutputDetail": "What 1000 tokens of output costs — it rises when the input is many times the output, which is where cache and context show up",
+			"report.perOutput": "Per 1K answer tokens",
+			"report.perOutputDetail": "What 1000 tokens of answer costs, thinking excluded — it rises when the input is many times the answer, which is where cache and context show up",
 			"report.hit": "Cache hit rate",
 			"report.hitDetail": "A hit bills at 1/50 of a miss (0.02 vs 1 CNY per M) — one point off and the money steps up",
 			"report.split": "Re-read / cold input / output",
@@ -322,6 +334,9 @@ window.__ModuleLoader__.load({
 			"advice.dismiss": "Dismiss",
 			"advice.restore": "Show dismissed tips",
 			"advice.contextReread.title": "Most spend is context re-read",
+			"advice.reasoningEffort.title": "Reasoning effort may be left too high",
+			"advice.reasoningEffort.body": "The setting is {effort}, thinking is {percent}% of the output (about ¥{cost}), yet the average answer is only {answer} tokens — that looks like errands rather than long reasoning.",
+			"advice.reasoningEffort.manual": "Manual: lower reasoningEffort a notch in the agent preset (currently {effort}). If you are in fact doing long reasoning, ignore this.",
 			"advice.contextReread.body": "{cost} of {totalCost} ({percent}%) is the same context re-read across {calls} requests. A smaller context saves more than shorter answers: start a fresh session, compact, or have tools emit less.",
 			"advice.fragmentedTools.title": "Fragmented calls",
 			"advice.fragmentedTools.body": "{tool} ran {calls} times, {fast} of them under 2s. Every result joins the context and is re-read on later turns — merging them into one script saves both.",
@@ -756,6 +771,21 @@ window.__ModuleLoader__.load({
 			}
 			rows.push(h(Detail, { key: "input", label: t(`${prefix}.input`), children: countText(inputTokensOf(bucket), t) }));
 			rows.push(h(Detail, { key: "output", label: t(`${prefix}.output`), children: countText(bucket.outputTokens, t) }));
+			if (bucket.reasoningTokens !== undefined && bucket.reasoningTokens > 0) {
+				// Named, not folded in: thinking is billed as output but it is not
+				// deliverable, and a reader who does not know the split cannot tell a
+				// hard task from a wasteful setting.
+				rows.push(
+					h(Detail, {
+						key: "thinking",
+						label: t(`${prefix}.thinking`),
+						children: t(`${prefix}.thinkingValue`, {
+							tokens: countText(bucket.reasoningTokens, t),
+							percent: Math.round((bucket.reasoningTokens / Math.max(1, bucket.outputTokens)) * 100)
+						})
+					})
+				);
+			}
 			rows.push(h(Detail, { key: "cost", label: costLabel, children: bucket.pricedTokens > 0 ? formatCny(bucket.costNano) : "—" }));
 			if (bucket.unpricedTokens > 0) {
 				rows.push(
@@ -1026,6 +1056,7 @@ window.__ModuleLoader__.load({
 
 		/** Stable code → locale key segment (dict keys must be identifier-shaped). */
 		const ADVICE_KEYS = {
+			"reasoning-effort": "reasoningEffort",
 			"context-reread": "contextReread",
 			"fragmented-tools": "fragmentedTools",
 			"repeated-target": "repeatedTarget",
@@ -1054,6 +1085,13 @@ window.__ModuleLoader__.load({
 						calls: values.calls,
 						cost: formatCny(values.costNano),
 						totalCost: formatCny(values.totalCostNano)
+					};
+				case "reasoning-effort":
+					return {
+						effort: values.effort,
+						percent: values.percent,
+						cost: formatCny(values.costNano),
+						answer: values.answer
 					};
 				case "fragmented-tools":
 					return { tool: values.tool, calls: values.calls, fast: values.fast };
@@ -1555,7 +1593,11 @@ window.__ModuleLoader__.load({
 			const perStep = ratioOf(now.costNano, now.steps);
 			const perTurn = ratioOf(now.costNano, now.turns);
 			const perEdit = ratioOf(now.costNano, now.edits);
-			const perOutput = ratioOf(now.costNano, now.outputTokens / 1000);
+			// Answer tokens, not output tokens: thinking is 57% of the output line on
+			// this machine, so dividing by the total hides exactly the thing the user
+			// asked about — thinking growing while the answers did not.
+			const answerTokens = Math.max(0, now.outputTokens - now.reasoningTokens);
+			const perAnswer = ratioOf(now.costNano, answerTokens / 1000);
 			const hit = ratioOf(now.cacheReadTokens, prompt);
 			return {
 				total: formatCny(now.costNano),
@@ -1582,8 +1624,13 @@ window.__ModuleLoader__.load({
 						key: "perOutput",
 						label: t("report.perOutput"),
 						detail: t("report.perOutputDetail"),
-						value: formatRatio(perOutput),
-						delta: reportDelta(perOutput, ratioOf(before.costNano, before.outputTokens / 1000), t, period)
+						value: formatRatio(perAnswer),
+						delta: reportDelta(
+							perAnswer,
+							ratioOf(before.costNano, Math.max(0, before.outputTokens - before.reasoningTokens) / 1000),
+							t,
+							period
+						)
 					},
 					{
 						key: "perTurn",
@@ -1680,7 +1727,12 @@ window.__ModuleLoader__.load({
 		const TREND_SERIES = [
 			{ key: "perStep", label: "report.perStep", ink: "dshstats-ink-0", value: (day) => ratioOf(offPeakCost(day), day.steps) },
 			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-1", value: (day) => ratioOf(offPeakCost(day), day.edits) },
-			{ key: "perOutput", label: "report.perOutput", ink: "dshstats-ink-2", value: (day) => ratioOf(offPeakCost(day), day.outputTokens / 1000) },
+			{
+				key: "perAnswer",
+				label: "report.perOutput",
+				ink: "dshstats-ink-2",
+				value: (day) => ratioOf(offPeakCost(day), Math.max(0, day.outputTokens - day.reasoningTokens) / 1000)
+			},
 			{ key: "perTurn", label: "report.perTurn", ink: "dshstats-ink-3", value: (day) => ratioOf(offPeakCost(day), day.turns) }
 		];
 
