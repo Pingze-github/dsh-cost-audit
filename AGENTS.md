@@ -22,7 +22,8 @@ No runtime dependency on any third-party plugin.
 | `bash scripts/check.sh` | **The single success criterion.** Parses both halves, runs the host-half behaviour suite, checks bundle wiring. |
 | `bash scripts/smoke.sh [--gui]` | The runtime verification in **one call**: the gate, the plugin's hot-swap phase, then an invariant sweep over every session on the machine through the live route (`--gui` adds a headless render of the newest session here). Prefer this to a handful of curls. |
 | `bash scripts/link-deps.sh` | Points the checkout's `node_modules` at the running harness (`zod`, `@deepseek-ai/dsh-llm`, `-credentials`, `-session-projection`, `cordis`). `check.sh` runs it on demand. |
-| `node scripts/gui-probe.mjs --url <authenticated-url> [--session <id>] [--out shot.png] [--wait <sel>] [--click <sel>] [--size W,H]` | Renders the live GUI in headless Chromium and reports what reached the DOM (`--report` takes a JS expression). `--size 1000,900` exercises the narrow-viewport fallback. |
+| `node scripts/gui-views.mjs --url <authenticated-url> [--session <id>]` | **The GUI check in one call.** One probe, one retry, both views (session panel, advice card, bill), and a verdict that separates a real failure from "could not verify". Prefer this to a hand-written `--report` expression. |
+| `node scripts/gui-probe.mjs --url <authenticated-url> [--session <id>] [--out shot.png] [--wait <sel>] [--click <sel>] [--size W,H]` | The generic primitive underneath: renders the live GUI in headless Chromium and reports what reached the DOM (`--report` takes a JS expression). Reach for it only when `gui-views.mjs` does not cover the question. `--size 1000,900` exercises the narrow-viewport fallback. |
 
 Install into a profile:
 
@@ -177,6 +178,13 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   reported exactly that about the report's notes (`line-height:1.35`, 16.2px
   against the panel's 18px). Differentiate with colour, never with size, and
   check with `getComputedStyle` rather than by eye.
+- **A check that is retyped is a check that drifts.** The author restated his
+  batching rule after a session in which the same three GUI clicks were written
+  as an inline `--report` expression over and over, each with its own sleeps and
+  its own parsing. Anything reusable belongs in `scripts/`: `gui-views.mjs` now
+  answers the whole "does the GUI render" question in one command, and
+  `smoke.sh --gui` is a one-line call into it. Before sending a second read-only
+  probe in a turn, stop and put both in one script.
 - **Draw cost per turn, never the daily total.** A daily total rises whenever you
   work more, so a curve of it says nothing about efficiency; cost per turn is the
   one series where a rising line means something. Days with no turns are gaps
