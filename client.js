@@ -160,12 +160,8 @@ window.__ModuleLoader__.load({
 			"report.steady": "基本持平",
 			"report.rise": "↑ {percent}%",
 			"report.fall": "↓ {percent}%",
-			"report.perStep": "每步",
-			"report.perStepDetail": "agent 每走一步要付多少 —— 步数由它自己决定，适合看效率；但把零碎调用合并成脚本会让它上升，那不是变贵",
-			"report.perTurn": "每回合",
-			"report.perTurnDetail": "你每发一条消息平均花多少钱 —— 注意回合不是工作量：说一句「你好」和一整个大任务都算一回合。它衡量的是习惯，不是效率",
 			"report.perEdit": "每产出编辑",
-			"report.perEditDetail": "每 write / edit / present 一次多少钱 —— 工作量口径；纯聊天、纯调研的日子没有产出，显示 —",
+			"report.perEditDetail": "每 write / edit / present 一次多少钱 —— 产出侧的工作量分母；纯聊天、纯调研的日子没有产出，显示 —",
 			"report.perOutput": "每 1K 回答 token",
 			"report.perOutputDetail": "产出 1000 token 回答要付多少（不含思考）—— 输入是回答的很多倍时它就高，缓存和上下文都在这里体现",
 			"report.hit": "缓存命中率",
@@ -326,12 +322,8 @@ window.__ModuleLoader__.load({
 			"report.steady": "about the same",
 			"report.rise": "up {percent}%",
 			"report.fall": "down {percent}%",
-			"report.perStep": "Per step",
-			"report.perStepDetail": "What one agent step costs — the step count is the agent's own choice, so this tracks efficiency; merging small calls into a script pushes it up, which is not the same as getting dearer",
-			"report.perTurn": "Per turn",
-			"report.perTurnDetail": "What one message of yours costs on average — but a turn is not a unit of work: one hello and one full day's task are both a turn. It measures habit, not efficiency",
 			"report.perEdit": "Per edit delivered",
-			"report.perEditDetail": "What one write / edit / present costs — the work denominator; a day of pure chat or research has none and reads —",
+			"report.perEditDetail": "What one write / edit / present costs — the delivered-side denominator; a day of pure chat or research has none and reads —",
 			"report.perOutput": "Per 1K answer tokens",
 			"report.perOutputDetail": "What 1000 tokens of answer costs, thinking excluded — it rises when the input is many times the answer, which is where cache and context show up",
 			"report.hit": "Cache hit rate",
@@ -1615,8 +1607,11 @@ window.__ModuleLoader__.load({
 			const pastCost = basisCost(before, basis);
 			const prompt = basisPart(now, "cacheReadTokens", basis) + basisPart(now, "uncachedInputTokens", basis) + basisPart(now, "cacheWriteTokens", basis);
 			const pastPrompt = basisPart(before, "cacheReadTokens", basis) + basisPart(before, "uncachedInputTokens", basis) + basisPart(before, "cacheWriteTokens", basis);
-			const perStep = ratioOf(cost, basisPart(now, "steps", basis));
-			const perTurn = ratioOf(cost, basisPart(now, "turns", basis));
+			// Two denominators only, both on the delivered side of the session: what
+			// one file change costs, and what 1000 answer tokens cost. A step count is
+			// the agent's own process — merging small calls into one script legitimately
+			// raises it — and a turn count is the user's habit, where a "hello" and a full
+			// day's work are both one. Neither is work, so neither is measured here.
 			const perEdit = ratioOf(cost, basisPart(now, "edits", basis));
 			// Answer tokens, not output tokens: thinking is 57% of the output line on
 			// this machine, so dividing by the total hides exactly the thing the user
@@ -1628,17 +1623,10 @@ window.__ModuleLoader__.load({
 			return {
 				total: formatCny(cost),
 				totalDelta: reportDelta(cost, pastCost, t, period),
-				// Work-shaped denominators first, the human's own last: a turn is one
-				// message, and a one-word message and a full day's work are both one,
-				// so it is a habit measure rather than a work measure.
+				// Two rows: what one delivered edit costs, what 1000 answer tokens cost.
+				// Both sit on the product side, so an agent that takes more steps — or a
+				// user who speaks less — cannot move them by process alone.
 				items: [
-					{
-						key: "perStep",
-						label: t("report.perStep"),
-						detail: t("report.perStepDetail"),
-						value: formatRatio(perStep),
-						delta: reportDelta(perStep, ratioOf(pastCost, basisPart(before, "steps", basis)), t, period)
-					},
 					{
 						key: "perEdit",
 						label: t("report.perEdit"),
@@ -1663,13 +1651,6 @@ window.__ModuleLoader__.load({
 							t,
 							period
 						)
-					},
-					{
-						key: "perTurn",
-						label: t("report.perTurn"),
-						detail: t("report.perTurnDetail"),
-						value: formatRatio(perTurn),
-						delta: reportDelta(perTurn, ratioOf(pastCost, basisPart(before, "turns", basis)), t, period)
 					},
 					{
 						key: "hit",
@@ -1774,30 +1755,27 @@ window.__ModuleLoader__.load({
 		/**
 		 * The denominators the chart draws, in legend order.
 		 *
-		 * All four are CNY per unit of work, so down is always better and one axis
-		 * can hold them. A hit rate is deliberately absent: it is a quality figure
-		 * that improves upwards, and mixing directions in one chart makes the whole
-		 * thing unreadable.
+		 * Both are CNY per unit of work, so down is always better and one axis can hold
+		 * them. A hit rate is deliberately absent: it is a quality figure that improves
+		 * upwards, and mixing directions in one chart makes the whole thing unreadable.
 		 *
-		 * `perTurn` stays in the set despite being the weakest denominator — a turn
-		 * is one message, and "hello" and a full day's work are both one — but it is
-		 * the only denominator the advice cannot move, so it earns a line of its own
-		 * rather than being the only line.
+		 * Only the two delivered-side denominators earn a line. A step count is the
+		 * agent's own process — merging small calls into one script legitimately raises
+		 * it — and a turn count is the user's habit, where a "hello" and a full day's
+		 * work are both one. Neither is work, so neither is drawn.
 		 */
 		const TREND_SERIES = [
-			{ key: "perStep", label: "report.perStep", ink: "dshstats-ink-0", value: (day, basis) => ratioOf(basisCost(day, basis), basisPart(day, "steps", basis)) },
-			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-1", value: (day, basis) => ratioOf(basisCost(day, basis), basisPart(day, "edits", basis)) },
+			{ key: "perEdit", label: "report.perEdit", ink: "dshstats-ink-0", value: (day, basis) => ratioOf(basisCost(day, basis), basisPart(day, "edits", basis)) },
 			{
 				key: "perAnswer",
 				label: "report.perOutput",
-				ink: "dshstats-ink-2",
+				ink: "dshstats-ink-1",
 				value: (day, basis) =>
 					ratioOf(
 						basisCost(day, basis),
 						Math.max(0, basisPart(day, "outputTokens", basis) - basisPart(day, "reasoningTokens", basis)) / 1000
 					)
-			},
-			{ key: "perTurn", label: "report.perTurn", ink: "dshstats-ink-3", value: (day, basis) => ratioOf(basisCost(day, basis), basisPart(day, "turns", basis)) }
+			}
 		];
 
 		/** The bases the bill can be computed on, in switch order. */
@@ -1865,8 +1843,8 @@ window.__ModuleLoader__.load({
 		/**
 		 * Cost per unit of work, one line per denominator, over the chosen window.
 		 *
-		 * Each line is stretched to its own range, because ¥0.004 per output token
-		 * and ¥0.20 per turn cannot share an absolute axis — so read the *shape* and
+		 * Each line is stretched to its own range, because ¥0.04 per delivered edit and
+		 * ¥0.002 per answer token cannot share an absolute axis — so read the *shape* and
 		 * the legend's latest value, not the height. Days without a denominator are
 		 * gaps rather than zeros: a day off is not a cheap day, and a day with no
 		 * edits has no cost per edit at all.

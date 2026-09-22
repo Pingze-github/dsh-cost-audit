@@ -185,11 +185,15 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   answers the whole "does the GUI render" question in one command, and
   `smoke.sh --gui` is a one-line call into it. Before sending a second read-only
   probe in a turn, stop and put both in one script.
-- **Draw cost per turn, never the daily total.** A daily total rises whenever you
-  work more, so a curve of it says nothing about efficiency; cost per turn is the
-  one series where a rising line means something. Days with no turns are gaps
-  rather than zeros — a day off is not a cheap day — and a line through fewer than
-  three days is not drawn at all.
+- **Draw cost per delivered unit, never the daily total.** A daily total rises
+  whenever you work more, so a curve of it says nothing about efficiency. The
+  chart carries exactly two lines, cost per delivered edit and cost per 1K answer
+  tokens, because the two denominators that were dropped are not work: a step
+  count is the agent's own process (merging small calls into one script
+  legitimately raises it) and a turn count is the user's habit (a "hello" and a
+  full day's work are both one). Days with no denominator are gaps rather than
+  zeros — a day off is not a cheap day — and a line through fewer than two days
+  is not drawn at all.
 - **A tip diagnoses history; its button acts on the present.** The re-read tip is
   raised by a *lifetime* share, but its one-click `/compact` spends real money
   (¥0.42 on the session where this was found) and only pays while the context is
