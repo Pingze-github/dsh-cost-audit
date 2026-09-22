@@ -93,7 +93,7 @@ const channelInject = injects.find((deps) => deps.includes("connection"));
 assert.ok(channelInject !== undefined, "the balance endpoint is armed through an injection");
 const balanceRoute = routes.find((route) => route.path.endsWith(".balance"));
 const reportRoute = routes.find((route) => route.path.endsWith(".report"));
-assert.equal(routes.length, 2, "exactly two routes registered");
+assert.equal(routes.length, 3, "exactly three routes registered");
 assert.ok(balanceRoute !== undefined, "the balance route is registered");
 assert.ok(reportRoute !== undefined, "the report route is registered");
 assert.equal(balanceRoute.path, "/api/dsh-cost-audit.balance", "the balance route sits on Connection's /api prefix");
@@ -106,6 +106,12 @@ assert.equal(balanceRoute.requestBody, "buffered", "the balance route declares a
 assert.equal(reportRoute.requestBody, "buffered", "the report route declares a body mode");
 assert.equal(typeof balanceRoute.fetch, "function", "the balance route is servable");
 assert.equal(typeof reportRoute.fetch, "function", "the report route is servable");
+const fineRoute = routes.find((route) => route.path.endsWith(".fine"));
+assert.ok(fineRoute !== undefined, "the fine series route is registered");
+assert.equal(fineRoute.path, "/api/dsh-cost-audit.fine", "the fine route sits on Connection's /api prefix");
+assert.deepEqual(fineRoute.methods, ["POST"], "the fine route answers POST");
+assert.equal(fineRoute.requestBody, "buffered", "the fine route declares a body mode");
+assert.equal(typeof fineRoute.fetch, "function", "the fine route is servable");
 
 //#region live account read
 
@@ -154,7 +160,7 @@ assert.equal(typeof reportRoute.fetch, "function", "the report route is servable
 		const fresh = await import(`../index.js?probe=${Date.now()}`);
 		fresh.apply(ctx, { balanceCacheMs: 0 });
 		const freshRoutes = routes.slice(before);
-		assert.equal(freshRoutes.length, 2, "the re-imported plugin registers its own routes");
+		assert.equal(freshRoutes.length, 3, "the re-imported plugin registers its own routes");
 		const freshBalance = freshRoutes.find((route) => route.path.endsWith(".balance"));
 		assert.ok(freshBalance !== undefined, "the re-imported plugin registers its own balance route");
 		const value = await (await freshBalance.fetch(new Request("http://dsh.internal/api/dsh-cost-audit.balance"))).json();
@@ -293,6 +299,72 @@ assert.equal(new Date(WEEKEND).getUTCDay(), 6, "WEEKEND must be a Saturday");
 	assert.equal(day.requests, 2, "both settlements are counted");
 	assert.equal(day.cacheReadCostNano + day.uncachedCostNano + day.outputCostNano, day.costNano, "the merged day still closes on its token axis");
 	assert.equal(day.peakCostNano + day.offPeakCostNano, day.costNano, "the merged day still closes on its tariff axis");
+}
+
+//#endregion
+
+//#region fine series
+
+{
+	// The fine series answers "did the change I made at 11:00 help". It reports
+	// per-call means at the resolution the intervention happened at, files every
+	// call under the prompt size it carried, and marks the intervention itself —
+	// because a curve on its own cannot tell a lighter strategy from a lighter
+	// context.
+	const minute = 60000;
+	const first = Math.floor(PEAK / minute) * minute;
+	const events = [
+		{ type: "request/header", seq: 1, time: first, data: { header: { config: { provider: "deepseek-official", model: "deepseek-flash", reasoningEffort: "high" } } } },
+		settle(1, 1, { inputTokens: 1000, cacheReadTokens: 100000, cacheWriteTokens: 0, outputTokens: 100 }, first + 1000),
+		{ type: "tool/call", seq: 3, time: first + 2000, data: { turn: 1, step: 2, callId: "spawn-1", name: "subagent" } },
+		{ type: "request/header", seq: 4, time: first + 3000, data: { header: { config: { model: "deepseek-flash", reasoningEffort: "low" } } } },
+		// A later bucket, off the peak window, carrying a much larger context.
+		settle(1, 2, { inputTokens: 1000, cacheReadTokens: 400000, cacheWriteTokens: 0, outputTokens: 100 }, OFF),
+		// And one call well before the window, which no query below may fold in.
+		settle(1, 3, { inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 }, first - 3600000)
+	];
+	const serve = () => {
+		services.sessionQuery = {
+			async listSessions() {
+				return [{ header: { id: "session-fine" } }];
+			},
+			async observeSession() {
+				return { header: { id: "session-fine" }, inheritedEventCount: 0, events };
+			}
+		};
+	};
+	const call = (body) => fineRoute.fetch(new Request("http://dsh.internal/api/dsh-cost-audit.fine", { method: "POST", body: JSON.stringify(body) }));
+	serve();
+	const fine = await (await call({ bucketMs: minute, since: first, until: first + minute })).json();
+	delete services.sessionQuery;
+	assert.equal(fine.ok, true, "the fine series is served");
+	assert.equal(fine.buckets.length, 1, "a one-minute window holds one bucket");
+	const bucket = fine.buckets[0];
+	assert.equal(bucket.calls, 1, "the settlement lands in the bucket");
+	assert.equal(bucket.promptTokens, 101000, "the prompt is the whole input side of the call");
+	assert.equal(bucket.bands[1].calls, 1, "a 101K prompt files under its own band");
+	assert.equal(bucket.bands[0].calls, 0, "and under no other");
+	assert.equal(bucket.bands[1].promptTokens, 101000, "the band carries the same prompt total");
+	assert.equal(bucket.costNano, 1000 * 2 * 1000 + 100000 * 0.04 * 1000 + 100 * 8 * 1000, "the call is priced at the peak rates of its own instant");
+	assert.equal(bucket.peakCostNano, bucket.costNano, "a peak call fills the peak half too");
+	assert.equal(bucket.spawns, 1, "a subagent spawn is counted in its bucket");
+	assert.equal(bucket.sessions, 1, "the bucket names how many sessions it saw");
+	assert.equal(fine.markers.some((marker) => marker.kind === "session" && marker.effort === "high"), true, "the session's signature is a marker");
+	const effort = fine.markers.find((marker) => marker.kind === "effort");
+	assert.deepEqual([effort.from, effort.to], ["high", "low"], "the effort marker names both ends");
+	assert.equal(fine.markers.some((marker) => marker.kind === "spawn" && marker.name === "subagent"), true, "the spawn is a marker");
+	assert.equal(fine.buckets.some((entry) => entry.t === Math.floor((first - 3600000) / minute) * minute), false, "a call before the window stays out");
+	serve();
+	const later = await (await call({ bucketMs: minute, since: first - 1800000, until: OFF + minute })).json();
+	delete services.sessionQuery;
+	assert.equal(later.buckets.length, 2, "the off-peak bucket joins the series");
+	const off = later.buckets.find((entry) => entry.t === Math.floor(OFF / minute) * minute);
+	assert.equal(off.peakCostNano, 0, "an off-peak call fills no peak money");
+	assert.equal(off.bands[3].calls, 1, "a 401K prompt files under the open band");
+	assert.equal(fine.failed, 0, "no session failed to fold");
+	assert.deepEqual(later.bands, [100000, 200000, 350000], "the payload names the band edges it filed by");
+	assert.equal(off.bands.length, later.bands.length + 1, "the last band is the open-ended one");
+	assert.equal(later.buckets[0].t, first, "the earlier bucket keeps its place in the series");
 }
 
 //#endregion

@@ -1754,6 +1754,277 @@ function createReportReader(ctx, unit) {
   };
 }
 
+//#region fine series
+
+/** A minute/hour-resolution series of per-call means, plus the moments the strategy changed. */
+const FINE_PATH = "/api/dsh-cost-audit.fine";
+/** Bucket sizes the route serves, clamped to this range. */
+const FINE_BUCKET_MIN_MS = 60000;
+const FINE_BUCKET_MAX_MS = 3600000;
+/** At most this many buckets come back, so one query cannot return a week of minutes. */
+const FINE_BUCKET_CAP = 720;
+/** Look-back when the caller names no window. */
+const FINE_DEFAULT_SPAN_MS = 86400000;
+/** Longest window the route will fold. */
+const FINE_SPAN_MAX_MS = 2592000000;
+/** Newest markers kept. */
+const FINE_MARKER_CAP = 200;
+/** Windows kept warm, so flipping a switch in the panel does not re-fold every session. */
+const FINE_CACHE_ENTRIES = 8;
+/**
+ * The upper bound of each prompt-size band, in tokens; the last band is open-ended.
+ *
+ * A daily total cannot say why it moved, and neither can a fine one on its own:
+ * the same curve rises when the context gets heavier and when more sessions run
+ * at once. Those are also the only two cost drivers a user can actually hold
+ * down — the task type is not one of them — so every bucket carries the same
+ * figures filed by prompt band, and the bucket names how many sessions it saw.
+ * A comparison across strategies is only worth reading inside one band.
+ */
+const CONTEXT_BANDS = Object.freeze([100000, 200000, 350000]);
+
+/**
+ * The band one call's prompt size files under.
+ * @param promptTokens - the whole input side of the call.
+ * @returns the band index.
+ */
+function fineBand(promptTokens) {
+  for (let index = 0; index < CONTEXT_BANDS.length; index += 1) {
+    if (promptTokens < CONTEXT_BANDS[index]) return index;
+  }
+  return CONTEXT_BANDS.length;
+}
+
+/**
+ * One empty bucket. `sessions` is a working set; it leaves as its size.
+ * @param t - the bucket's start, in epoch milliseconds.
+ * @returns the accumulator.
+ */
+function zeroFineBucket(t) {
+  return {
+    t,
+    calls: 0,
+    sessions: new Set(),
+    promptTokens: 0,
+    cacheReadTokens: 0,
+    uncachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    costNano: 0,
+    peakCostNano: 0,
+    spawns: 0,
+    // One band per edge, plus the open-ended one above the last edge.
+    bands: Array.from({ length: CONTEXT_BANDS.length + 1 }, () => ({ calls: 0, promptTokens: 0, cacheReadTokens: 0, outputTokens: 0, costNano: 0 })),
+  };
+}
+
+/**
+ * The bucket one instant falls in.
+ * @param time - epoch milliseconds.
+ * @param bucketMs - the requested resolution.
+ * @returns the bucket's start.
+ */
+function fineKey(time, bucketMs) {
+  return Math.floor(time / bucketMs) * bucketMs;
+}
+
+/**
+ * Normalize a fine-series request into a window the fold can trust.
+ *
+ * The window's end is snapped down to a bucket edge on purpose: the newest
+ * bucket is still filling, and a key that moves every second would miss the
+ * cache below on every render without ever showing anything new.
+ *
+ * @param body - the parsed request body.
+ * @param now - the host's clock.
+ * @returns the window, or null when the body is not an object.
+ */
+function fineWindow(body, now) {
+  if (body === null || typeof body !== "object") return null;
+  const asked = typeof body.bucketMs === "number" && Number.isFinite(body.bucketMs) ? Math.floor(body.bucketMs) : FINE_BUCKET_MIN_MS * 5;
+  const bucketMs = Math.min(FINE_BUCKET_MAX_MS, Math.max(FINE_BUCKET_MIN_MS, asked));
+  const capped = Math.min(now, typeof body.until === "number" && Number.isFinite(body.until) ? body.until : now);
+  const end = fineKey(capped, bucketMs);
+  const oldest = Math.max(end - FINE_SPAN_MAX_MS, end - bucketMs * FINE_BUCKET_CAP);
+  const askedSince = typeof body.since === "number" && Number.isFinite(body.since) ? body.since : end - FINE_DEFAULT_SPAN_MS;
+  const since = Math.min(Math.max(fineKey(askedSince, bucketMs), oldest), end - bucketMs);
+  const sessionId = typeof body.sessionId === "string" && body.sessionId !== "" ? body.sessionId : undefined;
+  return { bucketMs, since, until: end, sessionId };
+}
+
+/**
+ * Fold the log into per-call buckets, and collect what changed along the way.
+ *
+ * This reads the same events the daily fold reads and prices them with the same
+ * table, so a bucket and the day it belongs to can never disagree about money.
+ * Nothing here is persisted: minute resolution for ninety days would bloat every
+ * checkpoint on the machine, and the events already carry the time.
+ *
+ * @param ctx - the owning Cordis context.
+ * @param pricing - the resolved price table.
+ * @param options - a window from `fineWindow`.
+ * @returns the series, or a structured reason it could not be read.
+ */
+async function foldFine(ctx, pricing, options) {
+  const query = ctx.get("sessionQuery");
+  if (query === undefined) return { ok: false, reason: "no-session-query" };
+  let records;
+  if (options.sessionId !== undefined) {
+    records = [{ header: { id: options.sessionId } }];
+  } else {
+    try {
+      records = await query.listSessions();
+    } catch {
+      return { ok: false, reason: "list-failed" };
+    }
+    if (!Array.isArray(records)) return { ok: false, reason: "list-failed" };
+  }
+  const buckets = new Map();
+  const markers = [];
+  let folded = 0;
+  let failed = 0;
+  for (const record of records.slice(0, REPORT_SESSION_CAP)) {
+    const id = record?.header?.id;
+    if (typeof id !== "string") continue;
+    let observation;
+    try {
+      observation = await query.observeSession(id, { projectionMode: "none" });
+    } catch {
+      continue;
+    }
+    try {
+      let model = null;
+      let effort = null;
+      let announced = false;
+      for (const event of observation.events) {
+        const time = event.time;
+        if (typeof time !== "number" || time > options.until) continue;
+        // A header before the window still names the settings in force, so the
+        // first call inside it is priced and labelled correctly.
+        if (event.type === "request/header") {
+          const header = event.data?.header?.config;
+          const nextModel = typeof header?.model === "string" ? header.model : model;
+          const nextEffort = typeof header?.reasoningEffort === "string" && header.reasoningEffort !== "" ? header.reasoningEffort : effort;
+          if (time >= options.since) {
+            if (model !== null && nextModel !== null && nextModel !== model) markers.push({ t: time, kind: "model", from: model, to: nextModel, sessionId: id });
+            if (effort !== null && nextEffort !== null && nextEffort !== effort) markers.push({ t: time, kind: "effort", from: effort, to: nextEffort, sessionId: id });
+          }
+          model = nextModel;
+          effort = nextEffort;
+          continue;
+        }
+        if (time < options.since) continue;
+        if (event.type === "assistant/message") {
+          const usage = usageOf(event);
+          if (usage === undefined) continue;
+          const priced = priceUsage(usage, familyOf(model), isPeak(time), pricing);
+          if (priced === null) continue;
+          const prompt = priced.uncachedInputTokens + priced.cacheReadTokens + priced.cacheWriteTokens;
+          const key = fineKey(time, options.bucketMs);
+          let bucket = buckets.get(key);
+          if (bucket === undefined) {
+            bucket = zeroFineBucket(key);
+            buckets.set(key, bucket);
+          }
+          bucket.calls += 1;
+          bucket.sessions.add(id);
+          bucket.promptTokens += prompt;
+          bucket.cacheReadTokens += priced.cacheReadTokens;
+          bucket.uncachedInputTokens += priced.uncachedInputTokens;
+          bucket.cacheWriteTokens += priced.cacheWriteTokens;
+          bucket.outputTokens += priced.outputTokens;
+          bucket.reasoningTokens += priced.reasoningTokens;
+          bucket.costNano += priced.costNano;
+          if (isPeak(time)) bucket.peakCostNano += priced.costNano;
+          const band = bucket.bands[fineBand(prompt)];
+          band.calls += 1;
+          band.promptTokens += prompt;
+          band.cacheReadTokens += priced.cacheReadTokens;
+          band.outputTokens += priced.outputTokens;
+          band.costNano += priced.costNano;
+          if (!announced) {
+            announced = true;
+            markers.push({ t: time, kind: "session", model, effort, sessionId: id });
+          }
+        } else if (event.type === "tool/call") {
+          const name = event.data?.name;
+          if (name === "subagent" || name === "subagent_fork") {
+            const key = fineKey(time, options.bucketMs);
+            let bucket = buckets.get(key);
+            if (bucket === undefined) {
+              bucket = zeroFineBucket(key);
+              buckets.set(key, bucket);
+            }
+            bucket.spawns += 1;
+            markers.push({ t: time, kind: "spawn", name, sessionId: id });
+          }
+        } else if (event.type === "command/run") {
+          markers.push({ t: time, kind: "command", name: String(event.data?.name ?? ""), sessionId: id });
+        } else if (event.type === "compaction/summary") {
+          markers.push({ t: time, kind: "compaction", sessionId: id });
+        } else if (event.type === "permission/preset" || event.type === "sandbox/mode" || event.type === "approval/policy") {
+          markers.push({ t: time, kind: "setting", setting: event.type, value: JSON.stringify(event.data ?? null).slice(0, 80), sessionId: id });
+        }
+      }
+      folded += 1;
+    } catch {
+      // A session this fold cannot read leaves a partially filled bucket behind,
+      // so it is reported rather than dropped: a silent skip would make the
+      // series look complete when it is not.
+      failed += 1;
+      continue;
+    } finally {
+      observation[Symbol.dispose]?.();
+    }
+  }
+  const series = [...buckets.values()].sort((left, right) => left.t - right.t);
+  // Empty days at either end are the window, not the work: a trailing bucket
+  // that never filled only stretches the axis.
+  while (series.length > 0 && series[0].calls === 0 && series[0].spawns === 0) series.shift();
+  while (series.length > 0 && series.at(-1).calls === 0 && series.at(-1).spawns === 0) series.pop();
+  markers.sort((left, right) => left.t - right.t);
+  return {
+    ok: true,
+    bucketMs: options.bucketMs,
+    since: options.since,
+    until: options.until,
+    bands: [...CONTEXT_BANDS],
+    buckets: series.map((bucket) => ({ ...bucket, sessions: bucket.sessions.size })),
+    markers: markers.slice(-FINE_MARKER_CAP),
+    sessions: folded,
+    failed,
+    scanned: records.length,
+  };
+}
+
+/**
+ * The fine series, cached per window.
+ *
+ * Folding every session costs a full log read each, and the panel asks again on
+ * every switch. `fineWindow` snaps the end to a bucket edge, so the same request
+ * lands on the same key instead of missing forever on a moving timestamp.
+ *
+ * @param ctx - the owning Cordis context.
+ * @param pricing - the resolved price table.
+ * @returns the cached reader.
+ */
+function createFineReader(ctx, pricing) {
+  const cached = new Map();
+  return async function read(options) {
+    const key = `${String(options.bucketMs)}|${String(options.since)}|${String(options.until)}|${options.sessionId ?? ""}`;
+    const now = Date.now();
+    const hit = cached.get(key);
+    if (hit !== undefined && now - hit.at < REPORT_CACHE_MS) return hit.value;
+    const value = await foldFine(ctx, pricing, options);
+    cached.set(key, { at: now, value });
+    if (cached.size > FINE_CACHE_ENTRIES) cached.delete(cached.keys().next().value);
+    return value;
+  };
+}
+
+//#endregion
+
 /**
  * Mount the account read on Connection's exact Fetch-route registry.
  *
@@ -1786,6 +2057,7 @@ function watchBalanceRoute(ctx, config, unit) {
     }
     const read = createBalanceReader(ctx, config);
     const report = createReportReader(ctx, unit);
+    const fine = createFineReader(ctx, config.pricing);
     // One registration per effect, each announced separately: a route the
     // registry rejects must not take the other one down with it, and the log has
     // to name which one died. Learned the hard way — `requestBody` is a required
@@ -1818,7 +2090,18 @@ function watchBalanceRoute(ctx, config, unit) {
       requestBody: "buffered",
       fetch: async () => Response.json(await report()),
     });
-    gate.live = balanceLive && reportLive;
+    const fineLive = mount("fine route", {
+      path: FINE_PATH,
+      methods: ["POST"],
+      requestBody: "buffered",
+      fetch: async (request) => {
+        const body = await request.json().catch(() => null);
+        const options = fineWindow(body, Date.now());
+        if (options === null) return Response.json({ ok: false, reason: "bad-request" });
+        return Response.json(await fine(options));
+      },
+    });
+    gate.live = balanceLive && reportLive && fineLive;
     return () => {
       gate.live = false;
     };

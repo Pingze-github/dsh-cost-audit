@@ -230,6 +230,32 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   `dsh.profile.bundles` and hot-mounts new entries. Keep `dsh-hotswap` mounted or
   a restart is needed (and restarting `dsh web` kills the session hosting it).
 
+## Fine-grained series (host half, shipped; panel view follows)
+
+- **The fine series is folded at query time, from the events, not persisted.**
+  `POST /api/dsh-cost-audit.fine` with `{bucketMs, since, until, sessionId?}`
+  reads the same `observation.events` the day fold reads and prices them with the
+  same `priceUsage` / `isPeak`, so a bucket and the day containing it can never
+  disagree about money. Minute resolution for 90 days would bloat every
+  checkpoint on the machine; the events already carry `time`, so nothing new is
+  stored. Buckets are clamped to 1 min – 1 h, at most 720 come back, the window
+  is capped at 30 days, and the end is snapped to a bucket edge so the cache key
+  stops moving with the clock (`FINE_CACHE_ENTRIES` windows stay warm).
+- **Only two control variables are decomposable, so only two are carried.**
+  Prompt size is per call, so every bucket files the same figures under a
+  `CONTEXT_BANDS` band (`<100K / 100–200K / 200–350K / ≥350K`); how many sessions
+  ran at once is per bucket (`sessions`), which is the real subagent-concurrency
+  reading. Task type is not a variable anyone can hold down — do not promise a
+  "before vs after" comparison across task types, only inside a band.
+- **Markers are derived, never authored.** `request/header` config changes
+  (`model`, `reasoningEffort`), `tool/call` named `subagent` / `subagent_fork`,
+  `command/run`, `compaction/summary`, and `permission/preset` / `sandbox/mode` /
+  `approval/policy` become markers with the raw values, and the client composes
+  the sentence (the host emits no prose). A strategy change made *outside* a
+  session (editing a preset file, `settings.yaml`) leaves no event and therefore
+  no marker — it shows up only as the next session starting at a different
+  `reasoningEffort`.
+
 ## Verified against
 
 `@deepseek-ai/dsh` **0.1.5-rc.1 / 0.1.5-rc.2**, profile `web`, provider

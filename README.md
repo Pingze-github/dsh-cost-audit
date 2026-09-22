@@ -229,8 +229,9 @@ bundle 从 profile 清单里摘掉再加回去（每条条目会重新解析自�
   及其人民币费用。它走的是 harness 自己的 `tokenUsage` / `sessionStats` 同一条管线，所以客户端翻了多长的
   历史，数字都是完整的。重试记账对齐 `token-meter`：一次助手结算**替换**它自己那个 `(turn, step)` 槽位，而
   `llm/retry-started` 会先把槽位关掉，于是重试那次是**相加**。
-- **宿主半边**还注册两条 exact Connection Fetch 路由：`/api/dsh-cost-audit.balance` 提供账户余额和任意会话的
-  按需折叠，`/api/dsh-cost-audit.report` 把所有会话的按日桶合并成一份日历。按需折叠存在的原因是：投影管线
+- **宿主半边**还注册三条 exact Connection Fetch 路由：`/api/dsh-cost-audit.balance` 提供账户余额和任意会话的
+  按需折叠，`/api/dsh-cost-audit.report` 把所有会话的按日桶合并成一份日历，`/api/dsh-cost-audit.fine` 把同一批
+  事件按分钟/小时折成**每次调用的均值**并标出策略改动的时刻（改档位、换模型、起子 agent、压缩、切 preset / sandbox）。按需折叠存在的原因是：投影管线
   只会在一个会话已经有物化单元之后才把它发给客户端 —— 持久投影检查点早于本插件的会话没有 `dshCostAudit`
   那一行，而这条路由用同一个单元定义把这个缺口补上。报表路由要折叠一百多个会话，所以它缓存 60 秒。
 - **客户端半边**（`client.js`）注册进 harness 的 `conversation.chat.assistant-actions` 与
@@ -248,7 +249,7 @@ bundle 从 profile 清单里摘掉再加回去（每条条目会重新解析自�
 ## 目录
 
 ```
-index.js             宿主半边：dshCostAudit 投影 + balance / report 两条路由
+index.js             宿主半边：dshCostAudit 投影 + balance / report / fine 三条路由
 index.d.ts           公开类型 + SessionProjectionMap 的模块增强
 client.js            浏览器半边：两个插槽条目
 cordis.patch.yml     bundle 补丁（挂载宿主条目）
