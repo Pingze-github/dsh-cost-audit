@@ -31,13 +31,34 @@ JAR="${TMPDIR:-/tmp}/dsh-cost-audit-smoke.cookies"
 GUI=0
 [ "${1:-}" = "--gui" ] && GUI=1
 
-# The GUI is token-authenticated; the token is printed once at boot.
-TOKEN_URL="${DSH_STATS_URL:-$(grep -o 'http://127.0.0.1:3080/?token=[A-Za-z0-9_-]*' /var/log/dsh-web.log 2>/dev/null | tail -1 || true)}"
+# The GUI is token-authenticated; the token is printed once at boot to the
+# running process's stdout. Which file that is differs per deployment — a
+# restart can leave /var/log/dsh-web.log holding an earlier activation's token,
+# which authenticates nothing — so read the live listener's own log first, then
+# the conventional path, and keep the first candidate the server accepts.
+token_candidates() {
+  local pid log
+  for pid in $(ss -ltnp 2>/dev/null | sed -n 's/.*:3080 .*pid=\([0-9]*\).*/\1/p' | sort -u); do
+    log="$(readlink -f "/proc/$pid/fd/1" 2>/dev/null || true)"
+    [ -n "$log" ] && [ -f "$log" ] || continue
+    grep -o 'http://127.0.0.1:3080/?token=[A-Za-z0-9_-]*' "$log" 2>/dev/null | tail -1 || true
+  done
+  grep -o 'http://127.0.0.1:3080/?token=[A-Za-z0-9_-]*' /var/log/dsh-web.log 2>/dev/null | tail -1 || true
+}
+TOKEN_URL="${DSH_STATS_URL:-}"
+if [ -z "$TOKEN_URL" ]; then
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    curl -s -L -o /dev/null -c "$JAR" -b "$JAR" "$candidate" || continue
+    code=$(curl -s -b "$JAR" -H 'Origin: http://127.0.0.1:3080' -o /dev/null -w '%{http_code}' "$BASE/_dsh/hotswap/state" || true)
+    [ "$code" = "200" ] && { TOKEN_URL="$candidate"; break; }
+  done < <(token_candidates)
+fi
 if [ -z "$TOKEN_URL" ]; then
   echo "smoke: no authenticated URL — set DSH_STATS_URL" >&2
   exit 2
 fi
-curl -s -o /dev/null -c "$JAR" "$TOKEN_URL"
+curl -s -L -o /dev/null -c "$JAR" -b "$JAR" "$TOKEN_URL"
 AUTH=(-b "$JAR" -H 'Origin: http://127.0.0.1:3080')
 
 echo "smoke: static gate"

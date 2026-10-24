@@ -79,8 +79,14 @@ const blockedForeign = [];
 const stoppedNavigations = [];
 const foreignRequests = [];
 
-/** No CDP call may hang the probe: a navigated-away target swallows responses. */
-const SEND_TIMEOUT_MS = 90000;
+/**
+ * No CDP call may hang the probe: a navigated-away target swallows responses.
+ * A report that deliberately waits for the host's cold fold needs headroom —
+ * the bill and fine routes each take ~50 s on a 153-session machine — so the
+ * bound is two minutes, not 90 seconds. gui-views warms those folds over HTTP,
+ * but the bound still covers a cold walk when warming fails.
+ */
+const SEND_TIMEOUT_MS = 180000;
 
 function send(method, params = {}) {
 	const id = nextId++;

@@ -267,11 +267,54 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   `{ key: "24h", label: "fine.window24h" }` was never checked and a typo would
   have rendered the raw key. The gate now also scans every quoted string whose
   first segment is a locale segment and requires it in both dictionaries.
+- **The harness refuses a bundle on declaration, before any code runs.** dsh
+  0.2.0-rc.2 checks each profile bundle's `peerDependencies` against its own
+  version (prerelease-aware) and logs `skipping profile bundle …`. A plugin whose
+  code is compatible still disappears if its peer range is stale (this is exactly
+  what 0.1.0 hit on 0.2.0-rc.2: `^0.1.5-rc.1`). Keep the range a window
+  (`>=0.1.5-rc.1 <0.3.0`), not a caret on the shipped version, and remember that
+  the gate cannot catch it: `check.sh` resolves the same packages the harness
+  does, so it goes green while the bundle is skipped.
+- **A skipped bundle leaves no loader entry, and hot-mount re-checks nothing.**
+  `dsh-hotswap` mounts bundle entries straight from the patch, so removing the
+  bundle from `dsh.profile.bundles` and adding it back re-mounts it in the running
+  process — no restart (which would kill the session hosting the harness).
+- **0.2.0 renamed the 16px icon exports.** `IconDataOutline16` /
+  `IconLightOutline16` are gone; the replacements are `IconDataOutlineRegular` /
+  `IconLightOutlineRegular` (still 16 px by default). An undefined component
+  surfaces as React error #130 and then as
+  `slot entry crashed in 'conversation.composer.dock'` — a message that names the
+  slot, never the plugin. The client resolves both generations with a fallback
+  chain ending in a no-op component, so the next rename costs an icon instead of
+  the whole pill.
+- **A `waitFor` helper must resolve the matched value, not `true`.** `gui-views`
+  returned a boolean while the bill step called `bill.click()`; the throw rejected
+  an async IIFE inside a Promise that had no catch, so the promise never settled
+  and the only symptom was `Runtime.evaluate did not answer within 90000ms`. The
+  helper now resolves the element, the walk catches its own rejection, and a
+  170 s settle timer resolves with whatever was collected.
+- **The cold bill and fine folds take ~50 s each on this machine.** Both routes
+  fold every session on demand (153 sessions at the 0.1.1 upgrade; 72 on disk),
+  then cache the window. `gui-views` gives each view 60 s and settles the walk at
+  150 s; `gui-probe`'s CDP bound is 180 s. A shorter wait reports a healthy view
+  as "did not open", which is how 20 s hid a working bill.
+- **Polling for "a chart" cannot tell the bill from the fine view.** Both draw
+  `.dshstats-chart`, so after clicking 细粒度 the old bill chart still matched and
+  the wait returned instantly — and once the switch silently did not take, the
+  check had no way to say so. The walk now requires the chart to be gone 600 ms
+  after the click (`fineSwitched`) before waiting for the fine series, and reports
+  a switch that did not change the view as a failure rather than "not drawn".
+- **`smoke.sh` must take the token from the live listener, not a fixed log path.**
+  After a restart, `/var/log/dsh-web.log` can still hold an earlier activation's
+  token, which answers 401; the running process logs elsewhere
+  (`/root/dsh-web-0.2.0.log` here). The script now reads
+  `/proc/<pid>/fd/1` for the process listening on 3080, verifies the candidate
+  against `/_dsh/hotswap/state`, and falls back to the old path.
 
 ## Verified against
 
-`@deepseek-ai/dsh` **0.1.5-rc.1 / 0.1.5-rc.2**, profile `web`, provider
-`deepseek-official`, model `deepseek-flash`.
+`@deepseek-ai/dsh` **0.2.0-rc.2** (and the earlier 0.1.5-rc.1 / 0.1.5-rc.2), profile
+`web`, provider `deepseek-official`, model `deepseek-flash`.
 
 ## GUI probe
 
@@ -280,7 +323,10 @@ The bundled Debian Chromium (120) predates the `Iterator` global that
 installs a one-line polyfill before page scripts. Without it the app boots to
 "Failed to load plugins: Iterator is not defined".
 
-The GUI needs an authenticated URL: `grep -o 'http://127.0.0.1:3080/?token=[^ ]*' /var/log/dsh-web.log | tail -1`.
+The GUI needs an authenticated URL. Take it from the **running** listener's log —
+`readlink -f /proc/$(ss -ltnp | sed -n 's/.*:3080 .*pid=\([0-9]*\).*/\1/p' | head -1)/fd/1`
+— because `/var/log/dsh-web.log` may still hold an earlier activation's token;
+`smoke.sh` does exactly this and verifies the candidate before using it.
 `--session <id>` seeds `localStorage["dsh.sessions.current"]` so the probe opens a
 deterministic session. Use a **normal** session: subagent sessions refuse to load
 standalone ("subagent Sessions require their durable parent address"), which
@@ -303,13 +349,15 @@ why so many runs died as "could not attach" with no output at all. `gui-probe.mj
 now refuses every non-loopback http(s) request, answers a foreign **Document**
 navigation with `204` (failing it is not enough: the failure page replaces the
 document under test), skips the screenshot unless `--out` was asked for, and
-bounds every CDP call at 90 s. `gui-views.mjs` prints what was refused and repeats
+bounds every CDP call at 180 s (raised from 90 s so a report may wait out both
+cold folds). `gui-views.mjs` prints what was refused and repeats
 the probe's own last line when it cannot attach. The trigger is intermittent and
 time-based: a short walk (open the card, click the third view) completes, the long
 three-view walk can still lose the target — and when it does, the output now says
 which URL did it.
 
-**A hang is not a result.** The 120 s `spawnSync` timeout used to kill the probe
+**A hang is not a result.** The `spawnSync` timeout used to kill the probe
 before it printed anything, so three consecutive runs reported "could not attach"
-with no cause. Any new CDP call in the probe needs the same treatment as `send`:
-a bounded promise whose rejection is caught and reported.
+with no cause; it is now 200 s, above the probe's own 180 s bound. Any new CDP
+call in the probe needs the same treatment as `send`: a bounded promise whose
+rejection is caught and reported.

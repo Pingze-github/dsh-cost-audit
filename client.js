@@ -37,6 +37,22 @@ window.__ModuleLoader__.load({
 		const h = react.createElement;
 		const Fragment = react.Fragment;
 
+		// 0.1.5 exported the 16px glyphs as `IconXOutline16`; 0.2.0 renamed them
+		// to `IconXOutlineRegular` (whose `size` still defaults to 16). Resolve
+		// once, and fall through to a component that renders nothing, so a renamed
+		// primitive degrades to a pill without an icon instead of taking the whole
+		// dock entry down with React error #130.
+		const IconData =
+			primitives.IconDataOutline16 ??
+			primitives.IconDataOutlineRegular ??
+			primitives.IconDataOutlineMedium ??
+			(() => null);
+		const IconLight =
+			primitives.IconLightOutline16 ??
+			primitives.IconLightOutlineRegular ??
+			primitives.IconLightOutlineMedium ??
+			IconData;
+
 		const NS = "dsh-cost-audit";
 		/** The host half's exact Fetch route on Connection's `/api` prefix. */
 		const BALANCE_PATH = "/api/dsh-cost-audit.balance";
@@ -144,7 +160,7 @@ window.__ModuleLoader__.load({
 						"report.entry": "全账号账单",
 			"report.today": "今天",
 			"report.days": "{days} 天",
-			"report.loading": "账单还在读取（要把这台机器上每个会话都折一遍，头一次会慢一两秒）",
+			"report.loading": "账单还在读取（要把这台机器上每个会话都折一遍，会话多时第一次会慢几十秒）",
 			"report.trend": "单位工作量花费 · {active} 个工作日（窗口 {days} 天）",
 			"report.trendNote": "「全部」= 峰谷混在一起的原价；「高峰 / 非高峰」= 只算那个时段的请求，分子分母都是同一批样本。只画有活动的日子。每条线按自身范围拉伸，所以看方向，不看高低。",
 			"report.basisAll": "全部",
@@ -337,7 +353,7 @@ window.__ModuleLoader__.load({
 						"report.entry": "Whole-account bill",
 			"report.today": "Today",
 			"report.days": "{days} days",
-			"report.loading": "Reading the bill — it folds every session on this machine, so the first read takes a second or two",
+			"report.loading": "Reading the bill — it folds every session on this machine, so the first read can take tens of seconds when there are many",
 			"report.trend": "Cost per unit of work · {active} working days (of {days})",
 			"report.trendNote": "All mixes both tariffs at their own prices; Peak and Off-peak count only the requests from that window, numerator and denominator from the same sample. Only days with activity are drawn. Each line is stretched to its own range, so read the direction, not the height.",
 			"report.basisAll": "All",
@@ -969,14 +985,14 @@ window.__ModuleLoader__.load({
 							seat.setOpen(!seat.open);
 						}
 					},
-					h(primitives.IconDataOutline16, null),
+					h(IconData, null),
 					h("span", { className: "dshstats-label" }, cost)
 				),
 				panelOf({
 					open: seat.open,
 					panelRef: seat.panelRef,
 					pos: seat.pos,
-					icon: h(primitives.IconDataOutline16, null),
+					icon: h(IconData, null),
 					title: t("turn.title"),
 					value: countText(totalTokensOf(bucket), t),
 					ariaLabel: t("turn.title"),
@@ -1132,7 +1148,7 @@ window.__ModuleLoader__.load({
 		]);
 
 		/** The advice icon, with a fallback in case a release renames it. */
-		const ADVICE_ICON = primitives.IconLightOutline16 ?? primitives.IconDataOutline16;
+		const ADVICE_ICON = IconLight ?? IconData;
 
 		/** Stable code → locale key segment (dict keys must be identifier-shaped). */
 		const ADVICE_KEYS = {
@@ -2375,7 +2391,11 @@ window.__ModuleLoader__.load({
 			react.useEffect(() => {
 				if (!seat.open) return undefined;
 				return balance.refresh();
-			}, [seat.open, balance]);
+				// `refresh` is a stable `useCallback`; `balance` itself is a fresh
+				// object on every render, so depending on it re-ran this effect on
+				// every fetch it had just triggered — an endless balance-request
+				// loop that starved the page while the panel stayed open.
+			}, [seat.open, balance.refresh]);
 			const bucket = stats.total;
 			const cost = formatCny(bucket.costNano);
 			const today = formatCny(todayCostNano(stats));
@@ -2438,7 +2458,7 @@ window.__ModuleLoader__.load({
 							seat.setOpen(!seat.open);
 						}
 					},
-					h(primitives.IconDataOutline16, null),
+					h(IconData, null),
 					h(
 						"span",
 						{ className: "dshstats-label" },
@@ -2453,7 +2473,7 @@ window.__ModuleLoader__.load({
 					open: seat.open,
 					panelRef: seat.panelRef,
 					pos: seat.pos,
-					icon: h(primitives.IconDataOutline16, null),
+					icon: h(IconData, null),
 					title: t("session.title"),
 					value: countText(totalTokensOf(bucket), t),
 					ariaLabel: t("session.title"),

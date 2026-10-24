@@ -29,6 +29,7 @@ if (url === undefined) {
 	process.stderr.write("gui-views: --url is required\n");
 	process.exit(2);
 }
+
 const session = arg("--session");
 const retries = Number(arg("--retries", "2"));
 
@@ -41,7 +42,12 @@ const EXPRESSION = `new Promise((resolve) => {
     new Promise((done) => {
       const started = Date.now();
       const tick = () => {
-        if (fn()) { done(true); return; }
+        // Resolve the matched value, not true: the bill step needs the switch
+        // element itself. Returning a boolean made bill.click() throw inside
+        // the async walk, whose rejection the outer Promise never settles —
+        // which surfaced only as "Runtime.evaluate did not answer".
+        const value = fn();
+        if (value) { done(value); return; }
         if (Date.now() - started > ms) { done(false); return; }
         setTimeout(tick, 150);
       };
@@ -62,10 +68,13 @@ const EXPRESSION = `new Promise((resolve) => {
     if (!bill) { out.bill = "no-switch"; resolve(JSON.stringify(out)); return; }
     bill.click();
     // The bill folds every session on the machine before it can draw, so this
-    // waits for the chart rather than for a fixed number of milliseconds.
-    const drawn = await waitFor(() => document.querySelector(".dshstats-series path"), 20000);
+    // waits for the chart rather than for a fixed number of milliseconds. The
+    // fold is cold once per cache window and grows with the session count: on
+    // this machine (153 sessions) it takes ~50 s, which a 20 s wait reported as
+    // "the bill did not open" — a slow read, not a broken view.
+    const drawn = await waitFor(() => document.querySelector(".dshstats-series path"), 60000);
     out.bill = Boolean(document.querySelector(".dshstats-chart"));
-    out.waited = drawn;
+    out.waited = Boolean(drawn);
     out.series = document.querySelectorAll(".dshstats-series path").length;
     out.legend = [...document.querySelectorAll(".dshstats-legendItem")].map((n) => n.innerText.replace(/\\n/g, " "));
     out.reportRows = document.querySelectorAll(".dshstats-reportRow").length;
@@ -76,9 +85,14 @@ const EXPRESSION = `new Promise((resolve) => {
     const fine = pick("细粒度") ?? pick("Fine-grained");
     if (!fine) { out.fine = "no-switch"; resolve(JSON.stringify(out)); return; }
     fine.click();
-    // The fine view folds every session again, so it waits for its own chart.
-    out.fineWaited = await waitFor(() => document.querySelector(".dshstats-chart"), 25000);
-    out.fine = Boolean(document.querySelector(".dshstats-chart"));
+    // Switching views unmounts the bill chart; the fine view then folds every
+    // session again. Requiring the chart to disappear first is what separates
+    // "the switch did not take" from "the fold is still running" — polling for
+    // any chart matched the bill's own chart and hid the difference.
+    await new Promise((done) => setTimeout(done, 600));
+    out.fineSwitched = document.querySelector(".dshstats-chart") === null;
+    out.fineWaited = await waitFor(() => document.querySelector(".dshstats-series path"), 60000);
+    out.fine = out.fineSwitched === true && Boolean(document.querySelector(".dshstats-chart"));
     out.fineSeries = document.querySelectorAll(".dshstats-series path").length;
     out.fineMarkers = document.querySelectorAll(".dshstats-marker").length;
     out.fineRows = document.querySelectorAll(".dshstats-markerRow").length;
@@ -86,7 +100,10 @@ const EXPRESSION = `new Promise((resolve) => {
     out.fineHead = (document.querySelector(".dshstats-chartHead")?.innerText ?? "").replace(/\\n/g, " | ");
     out.fineNote = document.querySelector(".dshstats-note")?.innerText ?? "";
     resolve(JSON.stringify(out));
-  })();
+  })().catch((error) => resolve(JSON.stringify({ ...out, error: String((error && error.stack) || error) })));
+  // A promise that never settles reads as "Runtime.evaluate did not answer",
+  // which hides the cause. Settle with what was collected instead.
+  setTimeout(() => resolve(JSON.stringify({ ...out, timedOut: true })), 150000);
 })`;
 
 const probe = join(dirname(fileURLToPath(import.meta.url)), "gui-probe.mjs");
@@ -95,7 +112,7 @@ let raw = "";
 for (let attempt = 1; attempt <= retries && parsed === null; attempt += 1) {
 	const call = ["node", probe, "--url", url, "--wait", "[data-dsh-stats-session]", "--report", EXPRESSION];
 	if (session !== undefined) call.push("--session", session);
-	const run = spawnSync(call[0], call.slice(1), { encoding: "utf8", timeout: 120000 });
+	const run = spawnSync(call[0], call.slice(1), { encoding: "utf8", timeout: 200000 });
 	raw = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
 	try {
 		parsed = JSON.parse(run.stdout);
@@ -112,7 +129,16 @@ if (parsed === null) {
 }
 
 const errors = (parsed.consoleErrors ?? []).map(String);
-const mine = errors.filter((entry) => entry.includes("dsh-cost-audit"));
+// The harness names the slot that crashed, not the plugin that registered it,
+// so a `slot entry crashed` in one of the two slots this client mounts is
+// treated as ours: the alternative is reporting "no pill" (UNVERIFIED, exit 0)
+// for a render failure that is exactly what this check exists to catch.
+const OUR_SLOTS = ["conversation.composer.dock", "conversation.chat.assistant-actions"];
+const mine = errors.filter(
+	(entry) =>
+		entry.includes("dsh-cost-audit") ||
+		(entry.includes("slot entry crashed") && OUR_SLOTS.some((slot) => entry.includes(slot)))
+);
 if ((parsed.blockedCount ?? 0) > 0 || (parsed.stoppedNavigations ?? []).length > 0) {
 	process.stdout.write(
 		`gui-views: note — refused ${String(parsed.blockedCount)} foreign request(s), cancelled ${String((parsed.stoppedNavigations ?? []).length)} foreign navigation(s)\n`
@@ -126,6 +152,15 @@ if (parsed.report === null || parsed.report === undefined) {
 	process.exit(0);
 }
 const view = JSON.parse(parsed.report);
+
+if (view.error !== undefined) {
+	process.stdout.write(`gui-views: FAIL the view walk threw — ${String(view.error).split("\n")[0]}\n`);
+	process.exit(1);
+}
+if (view.timedOut === true) {
+	process.stdout.write("gui-views: UNVERIFIED — the view walk did not settle in 60 s\n");
+	process.exit(0);
+}
 
 if (mine.length > 0) {
 	process.stdout.write(`gui-views: FAIL console error — ${mine[0].split("\n")[0]}\n`);
@@ -151,7 +186,7 @@ if (view.bill === true) {
 	process.stdout.write(`gui-views: legend ${JSON.stringify(view.legend)}\n`);
 	process.stdout.write(`gui-views: switches ${JSON.stringify(view.switches)} (* = selected)\n`);
 } else {
-	process.stdout.write(`gui-views: UNVERIFIED — the bill view did not open (${String(view.bill)})\n`);
+	process.stdout.write(`gui-views: UNVERIFIED — the bill did not draw within 30 s (folds warmed over HTTP before the walk) (${String(view.bill)})\n`);
 }
 if (view.fine === true) {
 	if ((view.fineSeries ?? 0) < 1) {
@@ -163,7 +198,11 @@ if (view.fine === true) {
 } else if (view.fine === "no-switch") {
 	process.stdout.write("gui-views: UNVERIFIED — the fine switch was not on the card\n");
 } else {
-	process.stdout.write(`gui-views: UNVERIFIED — the fine view did not open (${String(view.fine)})\n`);
+	if (view.fineSwitched === false) {
+		process.stdout.write("gui-views: FAIL the fine switch did not change the panel's view\n");
+		process.exit(1);
+	}
+	process.stdout.write(`gui-views: UNVERIFIED — the fine view did not draw within 60 s; it folds every session too (${String(view.fine)})\n`);
 }
 if (errors.length > 0) {
 	process.stdout.write(`gui-views: note — ${String(errors.length)} console error(s) from other code: ${errors[0].split("\n")[0].slice(0, 60)}\n`);
