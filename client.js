@@ -1798,6 +1798,7 @@ window.__ModuleLoader__.load({
 								key: String(value),
 								type: "button",
 								role: "tab",
+								"data-dsh-stats-switch": String(value),
 								"aria-selected": value === period,
 								className: `dshstats-switchButton${value === period ? " dshstats-switchOn" : ""}`,
 								onClick: () => setPeriod(value)
@@ -1816,6 +1817,7 @@ window.__ModuleLoader__.load({
 								key: value,
 								type: "button",
 								role: "tab",
+								"data-dsh-stats-switch": value,
 								"aria-selected": value === basis,
 								className: `dshstats-switchButton${value === basis ? " dshstats-switchOn" : ""}`,
 								onClick: () => setBasis(value)
@@ -2346,6 +2348,7 @@ window.__ModuleLoader__.load({
 								key: entry.key,
 								type: "button",
 								role: "tab",
+								"data-dsh-stats-switch": entry.key,
 								"aria-selected": entry.key === active,
 								className: `dshstats-switchButton${entry.key === active ? " dshstats-switchOn" : ""}`,
 								onClick: () => onPick(entry.key)
@@ -2694,6 +2697,9 @@ window.__ModuleLoader__.load({
 					{
 						key,
 						type: "button",
+						// Locale-independent identity for the GUI check: the visible
+						// label is translated, the key is not.
+						"data-dsh-stats-view": key,
 						"aria-pressed": view === key,
 						className: `dshstats-switchButton${view === key ? " dshstats-switchOn" : ""}`,
 						onClick: () => setView(key)

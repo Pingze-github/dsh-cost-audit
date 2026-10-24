@@ -287,17 +287,35 @@ dsh plugin --profile web add link:/mnt/f/DSH/dsh-stats
   slot, never the plugin. The client resolves both generations with a fallback
   chain ending in a no-op component, so the next rename costs an icon instead of
   the whole pill.
+- **An effect that depends on a rebuilt object refetches forever.** The session
+  panel's balance effect listed `balance` among its deps, and `useBalance` returns
+  a fresh object every render — so each fetch it triggered re-ran the effect and
+  fired the next one. The panel stayed open, the page starved, and the pill read
+  `账户余额 读取中…` for as long as you watched. `refresh` is a stable
+  `useCallback`; depend on that and nothing else.
+- **A console error's stack cannot attribute it to a plugin here.** Every client
+  module loads through one `plugins/??a,b,c` URL, and that URL names this plugin,
+  so it appears in *every* frame. A sidebar failure ("Session reference … is
+  released") that merely fired while the probe was switching sessions therefore
+  failed the gate. The check now attributes on the error's first line only: our
+  own logs are prefixed `dsh-cost-audit`, and a render crash is named by its slot.
+- **A session with no tips has no door to the bill.** `AdvicePill` returns null
+  when it has nothing to say, and the bill and fine switches live inside that
+  card, so the walk cannot reach either view. That is not a slow fold: the check
+  says so and exits 0 instead of blaming a 60 s wait.
 - **A `waitFor` helper must resolve the matched value, not `true`.** `gui-views`
   returned a boolean while the bill step called `bill.click()`; the throw rejected
   an async IIFE inside a Promise that had no catch, so the promise never settled
   and the only symptom was `Runtime.evaluate did not answer within 90000ms`. The
   helper now resolves the element, the walk catches its own rejection, and a
-  170 s settle timer resolves with whatever was collected.
-- **The cold bill and fine folds take ~50 s each on this machine.** Both routes
-  fold every session on demand (153 sessions at the 0.1.1 upgrade; 72 on disk),
-  then cache the window. `gui-views` gives each view 60 s and settles the walk at
-  150 s; `gui-probe`'s CDP bound is 180 s. A shorter wait reports a healthy view
-  as "did not open", which is how 20 s hid a working bill.
+  settle timer resolves with whatever was collected.
+- **The cold bill and fine folds take ~60 s each on this machine.** Both routes
+  fold every session on demand, then cache the window. Measured 2026-10-24 over
+  168 sessions: the report route takes 63 s cold and 10 s warm, the fine route
+  60 s; the bill chart appears 62 s after the click and the fine chart 70 s into
+  the same walk. Budgets follow the measurement — 120 s per view, a 260 s settle
+  timer, a 320 s CDP bound and a 340 s `spawnSync`. A shorter wait reports a
+  healthy view as "did not open", which is how 20 s hid a working bill.
 - **Polling for "a chart" cannot tell the bill from the fine view.** Both draw
   `.dshstats-chart`, so after clicking 细粒度 the old bill chart still matched and
   the wait returned instantly — and once the switch silently did not take, the
@@ -349,15 +367,15 @@ why so many runs died as "could not attach" with no output at all. `gui-probe.mj
 now refuses every non-loopback http(s) request, answers a foreign **Document**
 navigation with `204` (failing it is not enough: the failure page replaces the
 document under test), skips the screenshot unless `--out` was asked for, and
-bounds every CDP call at 180 s (raised from 90 s so a report may wait out both
-cold folds). `gui-views.mjs` prints what was refused and repeats
-the probe's own last line when it cannot attach. The trigger is intermittent and
-time-based: a short walk (open the card, click the third view) completes, the long
-three-view walk can still lose the target — and when it does, the output now says
-which URL did it.
+bounds every CDP call at 320 s (raised from 90 s, then 180 s, so a report may
+outlast both cold folds; the in-page settle timer is 260 s). `gui-views.mjs`
+prints what was refused and repeats the probe's own last line when it cannot
+attach. The trigger is intermittent and time-based: a short walk (open the card,
+click the third view) completes, the long three-view walk can still lose the
+target — and when it does, the output now says which URL did it.
 
 **A hang is not a result.** The `spawnSync` timeout used to kill the probe
 before it printed anything, so three consecutive runs reported "could not attach"
-with no cause; it is now 200 s, above the probe's own 180 s bound. Any new CDP
+with no cause; it is now 340 s, above the probe's own 320 s bound. Any new CDP
 call in the probe needs the same treatment as `send`: a bounded promise whose
 rejection is caught and reported.

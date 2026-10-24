@@ -53,7 +53,11 @@ const EXPRESSION = `new Promise((resolve) => {
       };
       tick();
     });
-  const pick = (label) => [...document.querySelectorAll(".dshstats-switchButton")].find((n) => n.innerText === label);
+  // Switches are identified by their untranslated key, not their label. The
+  // labels follow the UI language, so a text match works in Chinese and silently
+  // reports "no switch" in English — which is exactly how a healthy view read as
+  // unverified once the probe got a fresh browser profile with en-US defaults.
+  const view = (key) => document.querySelector('[data-dsh-stats-view="' + key + '"]');
   const advice = document.querySelector(".dshstats-pill-warn") ?? document.querySelector(".dshstats-pill-high") ?? document.querySelector(".dshstats-pill-info");
   (async () => {
     document.querySelector("[data-dsh-stats-session] .dshstats-pill")?.click();
@@ -64,25 +68,27 @@ const EXPRESSION = `new Promise((resolve) => {
     advice.click();
     await waitFor(() => document.querySelector(".dshstats-adviceTitle"), 6000);
     out.adviceTitles = [...document.querySelectorAll(".dshstats-adviceTitle")].map((n) => n.innerText);
-    const bill = await waitFor(() => pick("全账号账单") ?? pick("Whole-account bill"), 6000);
+    const bill = await waitFor(() => view("bill"), 6000);
     if (!bill) { out.bill = "no-switch"; resolve(JSON.stringify(out)); return; }
     bill.click();
     // The bill folds every session on the machine before it can draw, so this
     // waits for the chart rather than for a fixed number of milliseconds. The
-    // fold is cold once per cache window and grows with the session count: on
-    // this machine (153 sessions) it takes ~50 s, which a 20 s wait reported as
-    // "the bill did not open" — a slow read, not a broken view.
-    const drawn = await waitFor(() => document.querySelector(".dshstats-series path"), 60000);
+    // fold is cold once per cache window and grows with the session count: 63 s
+    // for 168 sessions here, and 10 s warm. Shorter waits have twice reported a
+    // healthy view as "did not open".
+    const drawn = await waitFor(() => document.querySelector(".dshstats-series path"), 120000);
     out.bill = Boolean(document.querySelector(".dshstats-chart"));
     out.waited = Boolean(drawn);
     out.series = document.querySelectorAll(".dshstats-series path").length;
     out.legend = [...document.querySelectorAll(".dshstats-legendItem")].map((n) => n.innerText.replace(/\\n/g, " "));
     out.reportRows = document.querySelectorAll(".dshstats-reportRow").length;
     out.chartHead = (document.querySelector(".dshstats-chartHead")?.innerText ?? "").replace(/\\n/g, " | ");
+    // The card's own view switch marks itself with aria-pressed; the tabs
+    // inside use aria-selected. Read both or the selected view loses its star.
     out.switches = [...document.querySelectorAll(".dshstats-switchButton")].map(
-      (n) => n.innerText + (n.getAttribute("aria-selected") === "true" ? "*" : "")
+      (n) => n.innerText + ((n.getAttribute("aria-selected") ?? n.getAttribute("aria-pressed")) === "true" ? "*" : "")
     );
-    const fine = pick("细粒度") ?? pick("Fine-grained");
+    const fine = view("fine");
     if (!fine) { out.fine = "no-switch"; resolve(JSON.stringify(out)); return; }
     fine.click();
     // Switching views unmounts the bill chart; the fine view then folds every
@@ -91,7 +97,12 @@ const EXPRESSION = `new Promise((resolve) => {
     // any chart matched the bill's own chart and hid the difference.
     await new Promise((done) => setTimeout(done, 600));
     out.fineSwitched = document.querySelector(".dshstats-chart") === null;
-    out.fineWaited = await waitFor(() => document.querySelector(".dshstats-series path"), 60000);
+    // Boolean, not the element: waitFor resolves what matched, and an element in
+    // this object made JSON.stringify throw inside both the resolve below and the
+    // catch that was meant to report it. The promise then never settled, and the
+    // only symptom was "Runtime.evaluate did not answer" — with a circular-JSON
+    // console error as the sole clue.
+    out.fineWaited = Boolean(await waitFor(() => document.querySelector(".dshstats-series path"), 120000));
     out.fine = out.fineSwitched === true && Boolean(document.querySelector(".dshstats-chart"));
     out.fineSeries = document.querySelectorAll(".dshstats-series path").length;
     out.fineMarkers = document.querySelectorAll(".dshstats-marker").length;
@@ -100,10 +111,15 @@ const EXPRESSION = `new Promise((resolve) => {
     out.fineHead = (document.querySelector(".dshstats-chartHead")?.innerText ?? "").replace(/\\n/g, " | ");
     out.fineNote = document.querySelector(".dshstats-note")?.innerText ?? "";
     resolve(JSON.stringify(out));
-  })().catch((error) => resolve(JSON.stringify({ ...out, error: String((error && error.stack) || error) })));
+  })().catch((error) => {
+    // Never stringify the collected object here: the failure it is reporting may
+    // be exactly that object refusing to serialise, and a throw inside this
+    // handler leaves the promise unsettled all over again.
+    resolve(JSON.stringify({ error: String((error && error.stack) || error) }));
+  });
   // A promise that never settles reads as "Runtime.evaluate did not answer",
   // which hides the cause. Settle with what was collected instead.
-  setTimeout(() => resolve(JSON.stringify({ ...out, timedOut: true })), 150000);
+  setTimeout(() => resolve(JSON.stringify({ timedOut: true })), 260000);
 })`;
 
 const probe = join(dirname(fileURLToPath(import.meta.url)), "gui-probe.mjs");
@@ -112,7 +128,7 @@ let raw = "";
 for (let attempt = 1; attempt <= retries && parsed === null; attempt += 1) {
 	const call = ["node", probe, "--url", url, "--wait", "[data-dsh-stats-session]", "--report", EXPRESSION];
 	if (session !== undefined) call.push("--session", session);
-	const run = spawnSync(call[0], call.slice(1), { encoding: "utf8", timeout: 200000 });
+	const run = spawnSync(call[0], call.slice(1), { encoding: "utf8", timeout: 340000 });
 	raw = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
 	try {
 		parsed = JSON.parse(run.stdout);
@@ -134,11 +150,18 @@ const errors = (parsed.consoleErrors ?? []).map(String);
 // treated as ours: the alternative is reporting "no pill" (UNVERIFIED, exit 0)
 // for a render failure that is exactly what this check exists to catch.
 const OUR_SLOTS = ["conversation.composer.dock", "conversation.chat.assistant-actions"];
-const mine = errors.filter(
-	(entry) =>
-		entry.includes("dsh-cost-audit") ||
-		(entry.includes("slot entry crashed") && OUR_SLOTS.some((slot) => entry.includes(slot)))
-);
+// Attribute on what the error says, never on its stack. Every client module is
+// loaded through one `plugins/??a,b,c` URL, so that URL names this plugin and
+// appears in *every* frame — including a sidebar failure that merely fired while
+// the probe was switching sessions. Matching the raw entry failed the gate for
+// another package's error ("Session reference … is released"). Our own log lines
+// are prefixed `dsh-cost-audit`, and a render crash is named by its slot; those
+// two are the honest signals.
+const mine = errors.filter((entry) => {
+	const message = entry.split("\n")[0];
+	if (message.includes("dsh-cost-audit")) return true;
+	return message.includes("slot entry crashed") && OUR_SLOTS.some((slot) => message.includes(slot));
+});
 if ((parsed.blockedCount ?? 0) > 0 || (parsed.stoppedNavigations ?? []).length > 0) {
 	process.stdout.write(
 		`gui-views: note — refused ${String(parsed.blockedCount)} foreign request(s), cancelled ${String((parsed.stoppedNavigations ?? []).length)} foreign navigation(s)\n`
@@ -158,7 +181,7 @@ if (view.error !== undefined) {
 	process.exit(1);
 }
 if (view.timedOut === true) {
-	process.stdout.write("gui-views: UNVERIFIED — the view walk did not settle in 60 s\n");
+	process.stdout.write("gui-views: UNVERIFIED — the view walk did not settle in 260 s\n");
 	process.exit(0);
 }
 
@@ -177,6 +200,12 @@ if ((view.sessionRows ?? []).length > 0) {
 if (Array.isArray(view.adviceTitles)) {
 	process.stdout.write(`gui-views: advice ${String(view.adviceTitles.length)} — ${view.adviceTitles.join(" / ")}\n`);
 }
+if (view.advice === "none") {
+	// The advice card is the door to both charts, so a session with no tips has
+	// none to check. Say that once, rather than printing two fold-speed excuses.
+	process.stdout.write("gui-views: UNVERIFIED — this session has no advice tips, so the bill and fine views were not reached\n");
+	process.exit(0);
+}
 if (view.bill === true) {
 	if ((view.series ?? 0) < 1) {
 		process.stdout.write("gui-views: FAIL the bill view rendered no series\n");
@@ -186,7 +215,7 @@ if (view.bill === true) {
 	process.stdout.write(`gui-views: legend ${JSON.stringify(view.legend)}\n`);
 	process.stdout.write(`gui-views: switches ${JSON.stringify(view.switches)} (* = selected)\n`);
 } else {
-	process.stdout.write(`gui-views: UNVERIFIED — the bill did not draw within 30 s (folds warmed over HTTP before the walk) (${String(view.bill)})\n`);
+	process.stdout.write(`gui-views: UNVERIFIED — the bill did not draw within 120 s (the fold is the slow part, and it is cold here) (${String(view.bill)})\n`);
 }
 if (view.fine === true) {
 	if ((view.fineSeries ?? 0) < 1) {
@@ -202,7 +231,7 @@ if (view.fine === true) {
 		process.stdout.write("gui-views: FAIL the fine switch did not change the panel's view\n");
 		process.exit(1);
 	}
-	process.stdout.write(`gui-views: UNVERIFIED — the fine view did not draw within 60 s; it folds every session too (${String(view.fine)})\n`);
+	process.stdout.write(`gui-views: UNVERIFIED — the fine view did not draw within 120 s; it folds every session too (${String(view.fine)})\n`);
 }
 if (errors.length > 0) {
 	process.stdout.write(`gui-views: note — ${String(errors.length)} console error(s) from other code: ${errors[0].split("\n")[0].slice(0, 60)}\n`);

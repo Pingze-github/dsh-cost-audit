@@ -18,7 +18,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const argv = process.argv.slice(2);
@@ -33,7 +34,12 @@ const waitFor = arg("--wait");
 const sessionId = arg("--session");
 const click = arg("--click");
 const timeoutMs = Number(arg("--timeout", "45000"));
-const port = Number(arg("--port", "9333"));
+// 0 = let Chromium pick a free port and read it back from DevToolsActivePort.
+// A fixed port is a shared socket: a probe killed by its caller's timeout leaves
+// a browser behind, and the next run can then attach to that stale page — which
+// is how a walk ends up reading another run's session, replaying its console
+// history, and waiting on elements that were never there.
+const requestedPort = Number(arg("--port", "0"));
 const profileDir = arg("--profile", `/tmp/dsh-cost-audit-probe-${process.pid}`);
 const seedPair = arg("--seed");
 const reportExpr = arg(	"--report",
@@ -64,7 +70,7 @@ let chromium = spawn(
 		"--hide-scrollbars",
 		"--disable-dev-shm-usage",
 		`--user-data-dir=${profileDir}`,
-		`--remote-debugging-port=${port}`,
+		`--remote-debugging-port=${String(requestedPort)}`,
 		`--window-size=${arg("--size", "1500,1400")}`,
 		"about:blank"
 	],
@@ -82,11 +88,12 @@ const foreignRequests = [];
 /**
  * No CDP call may hang the probe: a navigated-away target swallows responses.
  * A report that deliberately waits for the host's cold fold needs headroom —
- * the bill and fine routes each take ~50 s on a 153-session machine — so the
- * bound is two minutes, not 90 seconds. gui-views warms those folds over HTTP,
- * but the bound still covers a cold walk when warming fails.
+ * the report route measured 63 s cold on a 168-session machine, and a walk
+ * touches both the bill and the fine fold — so the bound is 320 s, above the
+ * 260 s settle timer gui-views installs inside the page. A shorter bound kills
+ * the evaluation before that timer can answer with what it collected.
  */
-const SEND_TIMEOUT_MS = 180000;
+const SEND_TIMEOUT_MS = 320000;
 
 function send(method, params = {}) {
 	const id = nextId++;
@@ -113,7 +120,22 @@ function send(method, params = {}) {
 	});
 }
 
+/** The port this probe's own Chromium bound, so a stale browser can never answer. */
+async function debugPort(deadline) {
+	if (requestedPort !== 0) return requestedPort;
+	const file = join(profileDir, "DevToolsActivePort");
+	while (Date.now() < deadline) {
+		if (existsSync(file)) {
+			const chosen = Number(readFileSync(file, "utf8").split("\n")[0]);
+			if (Number.isInteger(chosen) && chosen > 0) return chosen;
+		}
+		await delay(100);
+	}
+	throw new Error("gui-probe: chromium never wrote DevToolsActivePort");
+}
+
 async function connect(deadline) {
+	const port = await debugPort(deadline);
 	while (Date.now() < deadline) {
 		try {
 			const answer = await fetch(`http://127.0.0.1:${port}/json/list`);
